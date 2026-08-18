@@ -30,6 +30,16 @@ export const BOT_COMMANDS = [
   { command: 'yordam', description: 'Yordam' },
 ];
 
+/** @BotFather ichidagi "Edit Description" matni (bot ochilganda ko'rinadi) */
+export const BOT_DESCRIPTION =
+  'NAVBAT — vaqtingiz yo‘q bo‘lsa, navbatda siz uchun kutadigan odam toping. ' +
+  'Bo‘sh vaqtingiz bo‘lsa, boshqalar uchun navbat kutib pul ishlang. ' +
+  'To‘lov xavfsiz saqlanadi va ish tugagandan keyin o‘tkaziladi.';
+
+/** Profil kartochkasidagi qisqa matn */
+export const BOT_SHORT_DESCRIPTION =
+  'Navbatda siz uchun kutadigan odam toping yoki navbat kutib pul ishlang.';
+
 export function createBot({ prisma, webAppUrl, apiRoot }: BotDeps, token: string): Bot {
   const bot = new Bot(token, apiRoot ? { client: { apiRoot } } : undefined);
 
