@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --tg-bg: #f4f5f7;
+  --tg-card: #ffffff;
+  --tg-text: #10131a;
+  --tg-hint: #7c8496;
+  --tg-link: #2d6bff;
+  --tg-border: #e6e8ee;
+}
+
+:root[data-theme='dark'] {
+  --tg-bg: #17181c;
+  --tg-card: #1f2126;
+  --tg-text: #f2f3f5;
+  --tg-hint: #8d94a3;
+  --tg-link: #6a9dff;
+  --tg-border: #2b2e36;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-tg-bg text-tg-text antialiased;
+    margin: 0;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px; /* iOS zoom oldini oladi */
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl bg-tg-card border border-tg-border;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl font-semibold
+           transition active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-500 text-white px-5 py-3.5 text-[15px];
+  }
+
+  .btn-success {
+    @apply btn bg-money-500 text-white px-5 py-3.5 text-[15px];
+  }
+
+  .btn-ghost {
+    @apply btn bg-tg-card border border-tg-border text-tg-text px-5 py-3.5 text-[15px];
+  }
+
+  .btn-danger {
+    @apply btn bg-red-500/10 text-red-600 border border-red-500/20 px-5 py-3.5 text-[15px];
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-tg-border bg-tg-card px-4 py-3 text-[15px]
+           text-tg-text placeholder:text-tg-hint outline-none
+           focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20;
+  }
+
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-tg-hint;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded-xl bg-tg-border;
+  }
+}
+
+/* Telegram pastki panel uchun xavfsiz zona */
+.safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+}
+
+/* Scrollbarni yashirish (mobil his-tuyg'u) */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
