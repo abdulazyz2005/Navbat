@@ -1,3 +1,5 @@
+import type { Bot } from 'grammy';
+import { BOT_COMMANDS, BOT_DESCRIPTION, BOT_SHORT_DESCRIPTION } from '@navbat/bot';
 import { createApp } from './app.js';
 import { TELEGRAM_WEBHOOK_PATH, env } from './env.js';
 import { prisma } from './lib/prisma.js';
@@ -42,6 +44,7 @@ async function startBot(): Promise<void> {
         secret_token: env.TELEGRAM_WEBHOOK_SECRET,
         allowed_updates: ['message', 'callback_query'],
       });
+      await syncBotProfile(bot);
       console.log(`[navbat] Bot: @${bot.botInfo.username} (webhook)`);
       console.log(`[navbat] Webhook: ${url}`);
       console.log(`[navbat] Havola: https://t.me/${bot.botInfo.username}`);
@@ -52,6 +55,7 @@ async function startBot(): Promise<void> {
     const bot = getBot();
     if (!bot) return;
     await bot.api.deleteWebhook({ drop_pending_updates: false });
+    await syncBotProfile(bot);
     void bot.start({
       onStart: (info) => {
         console.log(`[navbat] Bot: @${info.username} (long polling)`);
@@ -61,6 +65,41 @@ async function startBot(): Promise<void> {
   } catch (error) {
     // Bot ishga tushmasa ham API va Mini App ishlashda davom etadi
     console.error('[navbat] Botni ishga tushirib bo‘lmadi:', error);
+  }
+}
+
+/**
+ * Bot "profilini" har ishga tushganda Telegram bilan moslashtiradi:
+ *   - menyu tugmasi  → Mini Appni ochadi
+ *   - buyruqlar ro'yxati
+ *   - tavsif (description / short description)
+ *
+ * Shu tufayli @BotFather ichida qo'lda hech narsa bosish shart emas.
+ * Xatolik bo'lsa ham server ishlashda davom etadi — bu kritik emas.
+ */
+async function syncBotProfile(bot: Bot): Promise<void> {
+  const webAppUrl = env.WEB_APP_URL.replace(/\/+$/, '');
+  if (!webAppUrl.startsWith('https://')) {
+    console.warn(`[navbat] Menyu tugmasi o'rnatilmadi — WEB_APP_URL HTTPS emas: ${webAppUrl}`);
+    return;
+  }
+
+  try {
+    await bot.api.setChatMenuButton({
+      menu_button: { type: 'web_app', text: 'NAVBAT', web_app: { url: webAppUrl } },
+    });
+    await bot.api.setMyCommands(BOT_COMMANDS);
+    console.log(`[navbat] Menyu tugmasi va buyruqlar o'rnatildi: ${webAppUrl}`);
+  } catch (error) {
+    console.error(`[navbat] Menyu/buyruqlarni o'rnatib bo'lmadi: ${(error as Error).message}`);
+  }
+
+  // Telegram bir xil matnni qayta yozishga ruxsat bermasligi mumkin — kritik emas
+  try {
+    await bot.api.setMyDescription(BOT_DESCRIPTION);
+    await bot.api.setMyShortDescription(BOT_SHORT_DESCRIPTION);
+  } catch (error) {
+    console.warn(`[navbat] Tavsifni yangilab bo'lmadi: ${(error as Error).message}`);
   }
 }
 
