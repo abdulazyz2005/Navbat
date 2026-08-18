@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -12,6 +13,27 @@ import {
   sampleOrder,
 } from './helpers.js';
 import { signInitData } from '../apps/api/src/lib/telegram-auth.js';
+
+/** Telegram Web kabi `signature` maydoni bilan imzolangan initData yasaydi */
+function signInitDataWithSignature(
+  user: { id: number; first_name: string },
+  token: string,
+  signature: string,
+): string {
+  const params = new URLSearchParams();
+  params.set('user', JSON.stringify(user));
+  params.set('auth_date', String(Math.floor(Date.now() / 1000)));
+  params.set('signature', signature);
+
+  const dataCheckString = [...params.entries()]
+    .map(([key, value]) => `${key}=${value}`)
+    .sort()
+    .join('\n');
+
+  const secretKey = createHmac('sha256', 'WebAppData').update(token).digest();
+  params.set('hash', createHmac('sha256', secretKey).update(dataCheckString).digest('hex'));
+  return params.toString();
+}
 
 let buyer: { token: string; userId: string };
 let worker: { token: string; userId: string };
@@ -74,6 +96,31 @@ describe('Telegram initData validatsiyasi', () => {
     const res = await request(app).post(`${API}/auth/telegram`).send({ initData });
     expect(res.status).toBe(200);
     expect(res.body.token).toBeTruthy();
+  });
+
+  /**
+   * Telegram Web va yangi mijozlar initData'ga `signature` (Ed25519) qo'shadi.
+   * U HMAC data-check-string'ga KIRADI — aks holda login ishlamaydi.
+   */
+  it('`signature` maydonli initData qabul qilinadi (Telegram Web)', async () => {
+    const initData = signInitDataWithSignature(
+      { id: 888, first_name: 'Veb' },
+      TEST_BOT_TOKEN,
+      'FaKeEd25519Signature',
+    );
+    const res = await request(app).post(`${API}/auth/telegram`).send({ initData });
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeTruthy();
+  });
+
+  it('`signature` o‘zgartirilsa initData rad etiladi', async () => {
+    const initData = signInitDataWithSignature(
+      { id: 889, first_name: 'Buzuq' },
+      TEST_BOT_TOKEN,
+      'AsliySignature',
+    ).replace('signature=AsliySignature', 'signature=SoxtaSignature');
+    const res = await request(app).post(`${API}/auth/telegram`).send({ initData });
+    expect(res.status).toBe(401);
   });
 });
 
