@@ -1,0 +1,413 @@
+// NAVBAT — Prisma schema
+// Pul birliklari: HAMMA summa integer (UZS so'm, minor unit yo'q). Float ishlatilmaydi.
+
+generator client {
+  provider = "prisma-client-js"
+  // queryCompiler + driverAdapters => Rust query engine binary KERAK EMAS.
+  // Prisma Client sof JS/WASM sifatida ishlaydi va `pg` drayveri orqali ulanadi.
+  // Bu deploy hajmini kichraytiradi va serverless/konteyner muhitlarida ishonchli.
+  previewFeatures = ["driverAdapters"]
+  engineType      = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- enums
+
+enum RoleMode {
+  BUYER
+  WORKER
+  BOTH
+}
+
+enum OrderCategory {
+  DOCTOR
+  GOVERNMENT
+  DOCUMENTS
+  BANK
+  CONSULATE
+  SHOP
+  EVENT
+  OTHER
+}
+
+enum OrderStatus {
+  DRAFT
+  PUBLISHED
+  MATCHED
+  IN_PROGRESS
+  COMPLETION_PENDING
+  COMPLETED
+  CANCELLED
+  DISPUTED
+  REFUNDED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  HELD
+  RELEASED
+  REFUNDED
+  FAILED
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  CANCELLED
+  COMPLETED
+}
+
+enum MessageType {
+  TEXT
+  PHOTO
+  LOCATION
+  SYSTEM
+}
+
+enum DisputeReason {
+  WORKER_NO_SHOW
+  WORKER_LATE
+  TASK_NOT_DONE
+  WRONG_PLACE
+  OTHER
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED_BUYER
+  RESOLVED_WORKER
+  REJECTED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  REJECTED
+}
+
+enum WithdrawalMethod {
+  CARD
+  CLICK
+  PAYME
+  CASH
+}
+
+enum TransactionType {
+  TASK_INCOME
+  PLATFORM_FEE
+  REFUND
+  WITHDRAWAL
+  ORDER_PAYMENT
+  TOP_UP
+}
+
+enum NotificationType {
+  ORDER_CREATED
+  WORKER_FOUND
+  WORKER_STARTED
+  WORKER_COMPLETED
+  PAYMENT_RELEASED
+  DISPUTE_OPENED
+  DISPUTE_RESOLVED
+  NEW_MATCHING_ORDER
+  ORDER_ACCEPTED
+  ORDER_CANCELLED
+  CHECKIN_REMINDER
+  RATING_RECEIVED
+  WITHDRAWAL_UPDATE
+  NEW_MESSAGE
+}
+
+enum CheckInType {
+  ARRIVAL
+  PERIODIC
+  COMPLETION
+}
+
+// ---------------------------------------------------------------- models
+
+model User {
+  id         String   @id @default(uuid())
+  telegramId BigInt   @unique
+  username   String?
+  firstName  String
+  lastName   String?
+  photoUrl   String?
+  languageCode String?
+  isAdmin    Boolean  @default(false)
+  isBanned   Boolean  @default(false)
+  banReason  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  profile           Profile?
+  orders            Order[]        @relation("BuyerOrders")
+  assignments       Assignment[]
+  availability      Availability[]
+  paymentsPaid      Payment[]      @relation("Payer")
+  paymentsReceived  Payment[]      @relation("Receiver")
+  ratingsGiven      Rating[]       @relation("RatingFrom")
+  ratingsReceived   Rating[]       @relation("RatingTo")
+  messages          Message[]
+  disputes          Dispute[]      @relation("DisputeOpener")
+  withdrawals       Withdrawal[]
+  notifications     Notification[]
+  transactions      Transaction[]
+  checkIns          CheckIn[]
+
+  @@index([telegramId])
+  @@map("users")
+}
+
+model Profile {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  roleMode        RoleMode @default(BUYER)
+  onboarded       Boolean  @default(false)
+  rating          Int      @default(0) // 0..500 => 4.87 = 487. Integer, float emas.
+  ratingCount     Int      @default(0)
+  completedOrders Int      @default(0)
+  cancelledOrders Int      @default(0)
+  totalSpent      Int      @default(0) // UZS
+  totalEarned     Int      @default(0) // UZS
+  availableBalance Int     @default(0) // UZS — yechish mumkin
+  pendingBalance  Int      @default(0) // UZS — escrowda kutmoqda
+  avgResponseSec  Int      @default(0)
+  city            String?
+  phone           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model Order {
+  id             String        @id @default(uuid())
+  buyerId        String
+  category       OrderCategory
+  categoryOther  String?
+  title          String
+  description    String?
+  locationName   String
+  address        String
+  latitude       Float
+  longitude      Float
+  date           DateTime      @db.Date
+  startTime      String // "14:30"
+  endTime        String // "16:00"
+  offeredAmount  Int // navbatchi oladigan summa (UZS)
+  platformFee    Int // platforma komissiyasi (UZS)
+  totalAmount    Int // buyurtmachi to'laydigan jami (UZS)
+  status         OrderStatus   @default(DRAFT)
+  priceRaises    Int           @default(0)
+  cancelReason   String?
+  publishedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  buyer       User         @relation("BuyerOrders", fields: [buyerId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+  payment     Payment?
+  ratings     Rating[]
+  messages    Message[]
+  dispute     Dispute?
+  checkIns    CheckIn[]
+
+  @@index([status, date])
+  @@index([buyerId])
+  @@map("orders")
+}
+
+model Availability {
+  id            String   @id @default(uuid())
+  workerId      String
+  date          DateTime @db.Date
+  startTime     String
+  endTime       String
+  locationName  String
+  latitude      Float
+  longitude     Float
+  radiusKm      Int      @default(5)
+  minimumAmount Int      @default(0)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  worker User @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([workerId, date])
+  @@map("availability")
+}
+
+model Assignment {
+  id          String           @id @default(uuid())
+  orderId     String
+  workerId    String
+  status      AssignmentStatus @default(ACTIVE)
+  matchScore  Int              @default(0)
+  acceptedAt  DateTime         @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+  cancelReason String?
+
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  worker User  @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([workerId, status])
+  @@index([orderId])
+  @@map("assignments")
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  orderId       String        @unique
+  payerId       String
+  receiverId    String?
+  grossAmount   Int // buyurtmachi to'lagan jami
+  platformFee   Int
+  workerAmount  Int
+  status        PaymentStatus @default(PENDING)
+  provider      String        @default("mock")
+  transactionId String?
+  createdAt     DateTime      @default(now())
+  paidAt        DateTime?
+  releasedAt    DateTime?
+  refundedAt    DateTime?
+
+  order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  payer    User  @relation("Payer", fields: [payerId], references: [id])
+  receiver User? @relation("Receiver", fields: [receiverId], references: [id])
+
+  @@index([status])
+  @@map("payments")
+}
+
+model Transaction {
+  id        String          @id @default(uuid())
+  userId    String
+  orderId   String?
+  type      TransactionType
+  amount    Int // musbat = kirim, manfiy = chiqim
+  balanceAfter Int
+  note      String?
+  createdAt DateTime        @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("transactions")
+}
+
+model Rating {
+  id         String   @id @default(uuid())
+  orderId    String
+  fromUserId String
+  toUserId   String
+  rating     Int // 1..5
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromUser User  @relation("RatingFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser   User  @relation("RatingTo", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, fromUserId])
+  @@index([toUserId])
+  @@map("ratings")
+}
+
+model Message {
+  id        String      @id @default(uuid())
+  orderId   String
+  senderId  String
+  body      String
+  type      MessageType @default(TEXT)
+  fileId    String?
+  latitude  Float?
+  longitude Float?
+  readAt    DateTime?
+  createdAt DateTime    @default(now())
+
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sender User  @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@map("messages")
+}
+
+model Dispute {
+  id          String        @id @default(uuid())
+  orderId     String        @unique
+  openedById  String
+  reason      DisputeReason
+  description String?
+  status      DisputeStatus @default(OPEN)
+  resolution  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime      @default(now())
+
+  order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  openedBy User  @relation("DisputeOpener", fields: [openedById], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("disputes")
+}
+
+model Withdrawal {
+  id        String           @id @default(uuid())
+  workerId  String
+  amount    Int
+  method    WithdrawalMethod
+  account   String
+  status    WithdrawalStatus @default(PENDING)
+  note      String?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  worker User @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("withdrawals")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  orderId   String?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@map("notifications")
+}
+
+model CheckIn {
+  id        String      @id @default(uuid())
+  orderId   String
+  workerId  String
+  type      CheckInType
+  latitude  Float?
+  longitude Float?
+  distanceM Int?
+  createdAt DateTime    @default(now())
+
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  worker User  @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("check_ins")
+}
