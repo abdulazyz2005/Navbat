@@ -58,21 +58,36 @@ export function verifyInitData(
   if (!hash) throw new InitDataError('hash yo‘q');
 
   params.delete('hash');
-  // signature — Telegram'ning yangi Ed25519 imzosi; HMAC hisobiga kirmaydi
-  params.delete('signature');
 
-  const dataCheckString = [...params.entries()]
-    .map(([key, value]) => `${key}=${value}`)
-    .sort()
-    .join('\n');
-
+  /**
+   * MUHIM: data-check-string'ga `hash`dan BOSHQA hamma maydon kiradi —
+   * shu jumladan yangi mijozlar yuboradigan `signature` (Ed25519 imzo) ham.
+   * `signature` faqat uchinchi tomon tekshiruvida (public key) chiqarib tashlanadi.
+   * Uni HMAC hisobidan olib tashlash Telegram Web va yangi ilovalarda
+   * "imzo mos kelmadi" xatosini beradi.
+   */
   const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
-  const computedHash = crypto
-    .createHmac('sha256', secretKey)
-    .update(dataCheckString)
-    .digest('hex');
 
-  if (!timingSafeEqualHex(computedHash, hash)) {
+  const hmacOf = (entries: [string, string][]): string =>
+    crypto
+      .createHmac('sha256', secretKey)
+      .update(
+        entries
+          .map(([key, value]) => `${key}=${value}`)
+          .sort()
+          .join('\n'),
+      )
+      .digest('hex');
+
+  const entries = [...params.entries()];
+  let matched = timingSafeEqualHex(hmacOf(entries), hash);
+
+  // Zaxira: `signature`ni hisobga olmaydigan mijozlar bilan moslik uchun
+  if (!matched && params.has('signature')) {
+    matched = timingSafeEqualHex(hmacOf(entries.filter(([key]) => key !== 'signature')), hash);
+  }
+
+  if (!matched) {
     throw new InitDataError('imzo mos kelmadi');
   }
 
