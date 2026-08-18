@@ -13,9 +13,12 @@ export default defineConfig(({ command, mode }) => {
    */
   if (command === 'build' && env.NODE_ENV === 'development') {
     throw new Error(
-      '\n\n  ❌ .env faylida NODE_ENV=development turibdi — bu production buildni buzadi.\n' +
-        '     Yechim: .env dan NODE_ENV qatorini o‘chiring.\n' +
-        '     (API uchun standart qiymat allaqachon "development".)\n',
+      '\n\n  ❌ Build paytida NODE_ENV=development aniqlandi — bu production buildni buzadi.\n' +
+        '     React\'ning development versiyasi bundlega tushadi: hajm 2x, so‘rovlar 2x.\n\n' +
+        '     Qayerdan kelgan bo‘lishi mumkin:\n' +
+        '       1) .env faylidagi NODE_ENV qatori → o‘chiring\n' +
+        '       2) muhitdagi NODE_ENV=development → build oldidan olib tashlang\n' +
+        '       3) Dockerfile\'dagi ENV NODE_ENV=development → olib tashlang\n',
     );
   }
   const apiTarget = env.VITE_DEV_API_TARGET ?? `http://localhost:${env.PORT || 3001}`;
