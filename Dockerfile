@@ -13,10 +13,13 @@ WORKDIR /app
 
 # ---------------------------------------------------------------- build
 FROM base AS build
-ENV NODE_ENV=development
+# DIQQAT: bu bosqichda NODE_ENV o'rnatilmaydi.
+#   - NODE_ENV=production bo'lsa `npm ci` devDependencies'ni o'tkazib yuboradi (tsc/vite yo'q)
+#   - NODE_ENV=development bo'lsa Vite React'ning DEV versiyasini bundlega qo'shadi
+# O'rnatilmagan holat ikkalasini ham to'g'ri hal qiladi.
 COPY . .
 # postinstall: @navbat/shared build + prisma generate
-RUN npm ci
+RUN npm ci --include=dev
 RUN npm run build
 
 # ------------------------------------------------------------ production
