@@ -1,0 +1,54 @@
+{
+  "name": "navbat",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "NAVBAT — Telegram Mini App marketplace: buyurtmachi ↔ navbat kutuvchi",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web,bot -c blue,green,magenta \"npm:dev:api\" \"npm:dev:web\" \"npm:dev:bot\"",
+    "dev:api": "npm run dev -w @navbat/api",
+    "dev:web": "npm run dev -w @navbat/web",
+    "dev:bot": "npm run dev -w @navbat/bot",
+    "tunnel": "npx --yes cloudflared tunnel --url http://localhost:5173",
+    "build": "npm run build -w @navbat/shared && npm run build -w @navbat/bot && npm run build -w @navbat/api && npm run build -w @navbat/web",
+    "start": "node apps/api/dist/server.js",
+    "start:prod": "prisma migrate deploy && node apps/api/dist/server.js",
+    "serve": "NODE_ENV=production SERVE_WEB=true node apps/api/dist/server.js",
+    "setup:telegram": "tsx scripts/setup-telegram.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "db:seed": "tsx prisma/seed/index.ts",
+    "db:reset": "prisma migrate reset --force",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p packages/shared/tsconfig.json --noEmit && tsc -p apps/bot/tsconfig.json --noEmit && tsc -p apps/api/tsconfig.json --noEmit && npm run typecheck -w @navbat/web",
+    "postinstall": "npm run build -w @navbat/shared && prisma generate"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.23.0",
+    "concurrently": "^9.1.0",
+    "playwright": "^1.62.1",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^6.19.3",
+    "@prisma/client": "^6.1.0",
+    "pg": "^8.23.0"
+  }
+}

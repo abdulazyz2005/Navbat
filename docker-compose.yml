@@ -1,0 +1,50 @@
+# Lokal to'liq stack: Postgres + NAVBAT (API + Mini App + bot)
+#
+#   cp .env.example .env   # TELEGRAM_BOT_TOKEN va PUBLIC_URL ni to'ldiring
+#   docker compose up --build
+#
+# Telegram Mini App HTTPS talab qiladi — lokal test uchun tunnel oching:
+#   npx cloudflared tunnel --url http://localhost:3001
+# va olingan manzilni .env dagi PUBLIC_URL ga yozing.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: navbat
+    ports:
+      - '5432:5432'
+    volumes:
+      - navbat-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      SERVE_WEB: 'true'
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/navbat?schema=public
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET}
+      PUBLIC_URL: ${PUBLIC_URL}
+      BOT_MODE: ${BOT_MODE:-webhook}
+      ADMIN_TELEGRAM_IDS: ${ADMIN_TELEGRAM_IDS}
+      PLATFORM_FEE_PERCENT: ${PLATFORM_FEE_PERCENT:-10}
+    ports:
+      - '3001:3001'
+
+volumes:
+  navbat-db:
