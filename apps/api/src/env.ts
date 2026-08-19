@@ -123,8 +123,12 @@ export const env = {
   /** Minimal buyurtma summasi (UZS) */
   MIN_ORDER_AMOUNT: int('MIN_ORDER_AMOUNT', 10000),
 
-  /** Minimal pul yechish summasi (UZS) */
-  MIN_WITHDRAWAL_AMOUNT: int('MIN_WITHDRAWAL_AMOUNT', 50000),
+  /**
+   * Minimal pul yechish summasi (UZS).
+   * Komissiya navbatchidan ushlanadi, shuning uchun bitta o'rtacha topshiriqdan
+   * keyin ham pul yechish mumkin bo'lishi kerak.
+   */
+  MIN_WITHDRAWAL_AMOUNT: int('MIN_WITHDRAWAL_AMOUNT', 20000),
 
   /** initData qancha vaqt amal qiladi (sekund) */
   INIT_DATA_MAX_AGE_SEC: int('INIT_DATA_MAX_AGE_SEC', 86400),

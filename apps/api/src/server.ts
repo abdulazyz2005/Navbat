@@ -4,6 +4,7 @@ import { createApp } from './app.js';
 import { TELEGRAM_WEBHOOK_PATH, env } from './env.js';
 import { prisma } from './lib/prisma.js';
 import { expireStaleOrders } from './services/orders.js';
+import { expireStaleIntents } from './services/payment-intents.js';
 import { getBot, initBot } from './telegram.js';
 
 const app = createApp();
@@ -103,10 +104,11 @@ async function syncBotProfile(bot: Bot): Promise<void> {
   }
 }
 
-// Muddati o'tgan buyurtmalarni har soatda tozalash
+// Muddati o'tgan buyurtmalar va to'lov so'rovlarini har soatda tozalash
 const expiryTimer = setInterval(
   () => {
     expireStaleOrders().catch((error) => console.error('[navbat] expire xatolik:', error));
+    expireStaleIntents().catch((error) => console.error('[navbat] intent expire xatolik:', error));
   },
   60 * 60 * 1000,
 );

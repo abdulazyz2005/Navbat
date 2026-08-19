@@ -9,6 +9,7 @@ import { TELEGRAM_WEBHOOK_PATH, env } from './env.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { generalLimiter } from './middleware/rate-limit.js';
 import { adminRouter } from './routes/admin.js';
+import { adminAuthRouter } from './routes/admin-auth.js';
 import { authRouter } from './routes/auth.js';
 import { availabilityRouter } from './routes/availability.js';
 import { balanceRouter, withdrawalsRouter } from './routes/balance.js';
@@ -58,7 +59,11 @@ export function createApp() {
     }),
   );
 
-  // JSON body cheklovi — katta payload hujumlaridan himoya
+  /**
+   * JSON body cheklovi — katta payload hujumlaridan himoya.
+   * Chek rasmi uchun alohida, kattaroq chegara (rasm base64 bo'lib keladi).
+   */
+  app.use('/api/payments/intents/:id/receipt', express.json({ limit: '3mb' }));
   app.use(express.json({ limit: '256kb' }));
 
   /* ------------------------------------------------------- telegram webhook */
@@ -103,6 +108,8 @@ export function createApp() {
       minOrderAmount: env.MIN_ORDER_AMOUNT,
       minWithdrawalAmount: env.MIN_WITHDRAWAL_AMOUNT,
       paymentProvider: env.PAYMENT_PROVIDER,
+      /** To'lov usuli: karta-karta o'tkazma + admin tasdig'i */
+      paymentMode: 'card',
     });
   });
 
@@ -115,6 +122,8 @@ export function createApp() {
   api.use('/withdrawals', withdrawalsRouter);
   api.use('/disputes', disputesRouter);
   api.use('/notifications', notificationsRouter);
+  // Login endpointi guarddan OLDIN turadi (kod tokenga almashtiriladi)
+  api.use('/admin', adminAuthRouter);
   api.use('/admin', adminRouter);
 
   // Noma'lum API yo'li — SPA fallbackka tushmasligi kerak
@@ -145,10 +154,24 @@ export function createApp() {
         }),
       );
 
-      // SPA fallback: barcha qolgan GET so'rovlar index.html ni qaytaradi
+      /**
+       * IKKI ALOHIDA ILOVA:
+       *   /admin*  -> admin.html  (brauzerdagi admin panel)
+       *   qolgani  -> index.html  (Telegram Mini App)
+       *
+       * Ular alohida bundle: Mini App kodida admin panelining bironta ham
+       * komponenti yoki so'rovi yo'q.
+       */
+      const ADMIN_HTML = path.join(WEB_DIST, 'admin.html');
+      const hasAdminHtml = fs.existsSync(ADMIN_HTML);
+
       app.get('*', (req, res, next) => {
         if (req.path.startsWith('/api') || req.path.startsWith('/telegram')) return next();
         res.setHeader('Cache-Control', 'no-cache');
+        if (hasAdminHtml && (req.path === '/admin' || req.path.startsWith('/admin/'))) {
+          res.sendFile(ADMIN_HTML);
+          return;
+        }
         res.sendFile(path.join(WEB_DIST, 'index.html'));
       });
     }

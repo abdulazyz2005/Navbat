@@ -4,6 +4,7 @@ import type { Bot } from 'grammy';
 import { createBot } from '@navbat/bot';
 import { env } from './env.js';
 import { prisma } from './lib/prisma.js';
+import { registerBotExtensions } from './services/admin-bot.js';
 
 /**
  * Bot API bilan BIR PROCESSDA ishlaydi (bitta servis rejimi).
@@ -18,7 +19,10 @@ let bot: Bot | null = null;
 export function getBot(): Bot | null {
   if (env.BOT_MODE === 'off' || !env.TELEGRAM_BOT_TOKEN) return null;
   if (!bot) {
-    bot = createBot({ prisma, webAppUrl: env.WEB_APP_URL }, env.TELEGRAM_BOT_TOKEN);
+    bot = createBot(
+      { prisma, webAppUrl: env.WEB_APP_URL, extend: registerBotExtensions },
+      env.TELEGRAM_BOT_TOKEN,
+    );
   }
   return bot;
 }
