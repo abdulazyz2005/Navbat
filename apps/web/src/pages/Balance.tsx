@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   TRANSACTION_TYPE_LABELS,
   WITHDRAWAL_METHOD_LABELS,
@@ -8,6 +9,7 @@ import {
   type WithdrawalMethod,
 } from '@navbat/shared';
 import { ApiError, api } from '../lib/api';
+import { useAuth } from '../hooks/useAuth';
 import { money, timeAgo } from '../lib/format';
 import { hapticResult, showConfirm } from '../lib/telegram';
 import { EmptyState, ErrorBox, Section, Sheet, SkeletonList, Spinner, StatTile } from '../components/ui';
@@ -20,7 +22,11 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export function Balance() {
+  const navigate = useNavigate();
+  const { me, refresh } = useAuth();
   const [balance, setBalance] = useState<BalanceDTO | null>(null);
+  const [topUp, setTopUp] = useState(false);
+  const [topUpAmount, setTopUpAmount] = useState(50000);
   const [transactions, setTransactions] = useState<TransactionDTO[] | null>(null);
   const [withdrawals, setWithdrawals] = useState<WithdrawalDTO[]>([]);
   const [minWithdrawal, setMinWithdrawal] = useState(50000);
@@ -45,6 +51,10 @@ export function Balance() {
   }, []);
 
   useEffect(() => {
+    if (me?.profile.cardNumber && !account) setAccount(me.profile.cardNumber);
+  }, [me, account]);
+
+  useEffect(() => {
     void load();
     api
       .config()
@@ -54,6 +64,11 @@ export function Balance() {
 
   async function submit() {
     setError(null);
+    const digits = account.replace(/\D/g, '');
+    if (method === 'CARD' && digits.length !== 16) {
+      setError('Karta raqami 16 ta raqamdan iborat bo‘lishi kerak.');
+      return;
+    }
     if (account.trim().length < 4) {
       setError('Hisob raqami yoki telefon raqamini kiriting.');
       return;
@@ -61,6 +76,13 @@ export function Balance() {
     setSaving(true);
     try {
       await api.createWithdrawal({ amount: Math.trunc(amount), method, account: account.trim() });
+      // Kartani profilda saqlaymiz — keyingi safar qayta kiritish shart emas
+      if (method === 'CARD') {
+        await api
+          .updateMe({ cardNumber: account.replace(/\D/g, ''), cardHolder: me?.firstName ?? '' })
+          .then(() => refresh())
+          .catch(() => undefined);
+      }
       hapticResult('success');
       setOpen(false);
       await load();
@@ -98,6 +120,50 @@ export function Balance() {
             Minimal yechish summasi: {money(minWithdrawal)}
           </p>
         ) : null}
+      </div>
+
+      <div className="card p-4">
+        <div className="text-[15px] font-semibold">Hisobni to‘ldirish</div>
+        <p className="mt-1 text-[12px] leading-relaxed text-tg-hint">
+          Kartadan kartaga o‘tkazma. Tizim sizga aynan yuboriladigan summani beradi, chekni
+          yuklaysiz va tasdiqlangach pul balansga tushadi.
+        </p>
+        {topUp ? (
+          <div className="mt-3 space-y-2">
+            <input
+              className="input"
+              type="number"
+              inputMode="numeric"
+              value={topUpAmount || ''}
+              onChange={(event) => setTopUpAmount(Number.parseInt(event.target.value || '0', 10))}
+              placeholder="Summa"
+            />
+            <div className="flex gap-2">
+              {[50000, 100000, 200000].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className="chip flex-1 justify-center border border-tg-border bg-tg-card text-tg-hint"
+                  onClick={() => setTopUpAmount(value)}
+                >
+                  {value / 1000}k
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary w-full py-3"
+              disabled={topUpAmount < 1000}
+              onClick={() => navigate(`/topup?amount=${Math.trunc(topUpAmount)}`)}
+            >
+              Davom etish
+            </button>
+          </div>
+        ) : (
+          <button type="button" className="btn btn-ghost mt-3 w-full py-3" onClick={() => setTopUp(true)}>
+            + To‘ldirish
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-2">

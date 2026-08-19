@@ -51,7 +51,7 @@ export function CreateOrder() {
     try {
       return calculatePrice(Math.max(1, Math.trunc(amount)), feePercent);
     } catch {
-      return { offeredAmount: 0, platformFee: 0, totalAmount: 0, feePercent };
+      return { offeredAmount: 0, platformFee: 0, workerAmount: 0, totalAmount: 0, feePercent };
     }
   }, [amount, feePercent]);
 
@@ -95,10 +95,24 @@ export function CreateOrder() {
         offeredAmount: Math.trunc(amount),
       });
 
-      // To'lov: pul escrowga o'tadi va buyurtma e'lon qilinadi
-      await api.payOrder(order.id);
-      hapticResult('success');
-      navigate(`/orders/${order.id}`, { replace: true });
+      /**
+       * To'lov balansdan yechiladi. Balans yetmasa — karta orqali to'lash
+       * sahifasiga o'tamiz: u yerda karta raqami va aynan yuborilishi kerak
+       * bo'lgan summa ko'rsatiladi.
+       */
+      try {
+        await api.payOrder(order.id);
+        hapticResult('success');
+        navigate(`/orders/${order.id}`, { replace: true });
+      } catch (payError) {
+        if (payError instanceof ApiError && payError.code === 'INSUFFICIENT_BALANCE') {
+          const details = payError.details as { shortfall?: number } | undefined;
+          const shortfall = details?.shortfall ?? Math.trunc(amount);
+          navigate(`/pay/${order.id}?amount=${shortfall}`, { replace: true });
+          return;
+        }
+        throw payError;
+      }
     } catch (err) {
       hapticResult('error');
       setError(err instanceof ApiError ? err.message : 'Xatolik yuz berdi');
@@ -256,15 +270,16 @@ export function CreateOrder() {
           ))}
         </div>
         <p className="mt-2 text-[12px] leading-relaxed text-tg-hint">
-          Navbat kutuvchi ushbu summani to‘liq oladi. Platforma komissiyasi alohida hisoblanadi.
+          Siz aynan shu summani to‘laysiz. Navbatchiga xizmat haqi ushlangandan keyingi
+          summa o‘tkaziladi.
         </p>
       </div>
 
       <div className="card space-y-2 p-4">
-        <Row label="Navbatchiga" value={money(price.offeredAmount)} />
-        <Row label={`Platforma (${feePercent}%)`} value={money(price.platformFee)} />
+        <Row label="Siz to‘laysiz" value={money(price.totalAmount)} bold />
+        <Row label={`Xizmat haqi (${feePercent}%)`} value={`− ${money(price.platformFee)}`} />
         <div className="border-t border-tg-border pt-2">
-          <Row label="Jami to‘lov" value={money(price.totalAmount)} bold />
+          <Row label="Navbatchi oladi" value={money(price.workerAmount)} bold />
         </div>
       </div>
 

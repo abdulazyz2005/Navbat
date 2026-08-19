@@ -256,6 +256,36 @@ export function OrderDetail() {
           </>
         ) : null}
 
+        {isBuyer && order.status === 'DRAFT' ? (
+          <>
+            <div className="card border-warn-500/40 bg-warn-500/10 p-4 text-[13px] leading-relaxed">
+              Bu buyurtma hali e’lon qilinmagan — to‘lov kutilmoqda. To‘lov tasdiqlangach
+              navbatchilar uni ko‘radi.
+            </div>
+            <button
+              type="button"
+              className="btn-primary w-full"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  try {
+                    return await api.payOrder(order.id);
+                  } catch (payError) {
+                    if (payError instanceof ApiError && payError.code === 'INSUFFICIENT_BALANCE') {
+                      const details = payError.details as { shortfall?: number } | undefined;
+                      navigate(`/pay/${order.id}?amount=${details?.shortfall ?? order.totalAmount}`);
+                      return order;
+                    }
+                    throw payError;
+                  }
+                })
+              }
+            >
+              {busy ? <Spinner /> : `To‘lash · ${money(order.totalAmount)}`}
+            </button>
+          </>
+        ) : null}
+
         {isBuyer && order.status === 'PUBLISHED' ? (
           <>
             <div className="card p-4 text-[13px] leading-relaxed text-tg-hint">

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { RatingDTO } from '@navbat/shared';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { formatRating, money, timeAgo } from '../lib/format';
-import { Avatar, Section, Spinner, StatTile } from '../components/ui';
-import { haptic } from '../lib/telegram';
+import { Avatar, ErrorBox, Section, Spinner, StatTile } from '../components/ui';
+import { haptic, hapticResult } from '../lib/telegram';
 
 const ROLE_LABELS: Record<string, string> = {
   BUYER: 'Buyurtmachi',
@@ -82,12 +82,15 @@ export function Profile() {
         </div>
       </Section>
 
+      <Section title="Pul olish uchun karta">
+        <CardSettings />
+      </Section>
+
       <Section title="Hisob">
         <div className="space-y-2">
           <MenuItem label="💰 Balans va to‘lovlar" onClick={() => navigate('/balance')} />
           <MenuItem label="🔔 Bildirishnomalar" onClick={() => navigate('/notifications')} />
           <MenuItem label="⚖️ Nizolarim" onClick={() => navigate('/disputes')} />
-          {me.isAdmin ? <MenuItem label="🛠 Admin panel" onClick={() => navigate('/admin')} /> : null}
           <MenuItem label="🔄 Yangilash" onClick={() => void refresh()} />
         </div>
       </Section>
@@ -169,6 +172,69 @@ export function Legal() {
           mos topshiriqlarni topish va topshiriq bajarilganini tasdiqlash (check-in).
         </p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Navbatchi ishlagan pulini shu kartaga oladi.
+ * Karta faqat egasiga va to'lovni amalga oshiruvchi adminga ko'rinadi.
+ */
+function CardSettings() {
+  const { me, refresh } = useAuth();
+  const [card, setCard] = useState(me?.profile.cardNumber ?? '');
+  const [holder, setHolder] = useState(me?.profile.cardHolder ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    const digits = card.replace(/\D/g, '');
+    if (digits.length !== 16) {
+      setError('Karta raqami 16 ta raqamdan iborat bo‘lishi kerak.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await api.updateMe({ cardNumber: digits, cardHolder: holder.trim() });
+      await refresh();
+      setSaved(true);
+      hapticResult('success');
+    } catch (err) {
+      hapticResult('error');
+      setError(err instanceof ApiError ? err.message : 'Saqlab bo‘lmadi');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card space-y-2 p-4">
+      {error ? <ErrorBox message={error} /> : null}
+      <label className="label">Karta raqami</label>
+      <input
+        className="input font-mono"
+        value={card}
+        onChange={(event) => setCard(event.target.value)}
+        placeholder="8600 1234 5678 9012"
+        inputMode="numeric"
+      />
+      <label className="label">Karta egasi</label>
+      <input
+        className="input"
+        value={holder}
+        onChange={(event) => setHolder(event.target.value)}
+        placeholder="ISM FAMILIYA"
+      />
+      <button type="button" className="btn btn-primary w-full py-3" onClick={() => void save()} disabled={saving}>
+        {saving ? 'Saqlanmoqda…' : 'Saqlash'}
+      </button>
+      {saved ? <div className="text-center text-[13px] text-money-600">Saqlandi ✓</div> : null}
+      <p className="text-[12px] leading-relaxed text-tg-hint">
+        Pul yechish so‘rovi yuborganingizda summa shu kartaga o‘tkaziladi.
+      </p>
     </div>
   );
 }
