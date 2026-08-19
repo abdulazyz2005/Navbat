@@ -20,6 +20,12 @@ export interface BotDeps {
    * (soxta API serverga yo'naltirish uchun).
    */
   apiRoot?: string;
+  /**
+   * Qo'shimcha handlerlar (masalan admin amallari).
+   * MUHIM: ular boshqa handlerlardan OLDIN ro'yxatdan o'tadi, chunki
+   * quyidagi "har qanday matn" handleri zanjirni to'xtatadi.
+   */
+  extend?: (bot: Bot) => void;
 }
 
 export const BOT_COMMANDS = [
@@ -40,8 +46,11 @@ export const BOT_DESCRIPTION =
 export const BOT_SHORT_DESCRIPTION =
   'Navbatda siz uchun kutadigan odam toping yoki navbat kutib pul ishlang.';
 
-export function createBot({ prisma, webAppUrl, apiRoot }: BotDeps, token: string): Bot {
+export function createBot({ prisma, webAppUrl, apiRoot, extend }: BotDeps, token: string): Bot {
   const bot = new Bot(token, apiRoot ? { client: { apiRoot } } : undefined);
+
+  // Qo'shimcha handlerlar birinchi bo'lib ro'yxatdan o'tadi
+  extend?.(bot);
 
   /**
    * Mini App tugmasi.
