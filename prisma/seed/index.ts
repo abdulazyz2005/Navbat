@@ -238,6 +238,15 @@ async function main() {
     { buyer: jasur, category: 'SHOP', title: 'Elektronika do‘koni navbati', description: '', place: PLACES.chilonzor, locationName: 'Malika savdo markazi', address: 'Chilonzor, Qatortol 3', days: -6, start: '09:00', end: '11:00', amount: 25000, status: 'CANCELLED' },
   ];
 
+  // Demo platforma kartasi — bo'lmasa to'lov oqimi ishga tushmaydi
+  for (const [key, value] of [
+    ['payout.card_number', '8600123412341234'],
+    ['payout.card_holder', 'NAVBAT DEMO'],
+    ['payout.card_bank', 'Demo Bank'],
+  ] as const) {
+    await prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } });
+  }
+
   let created = 0;
   for (const spec of specs) {
     const price = calculatePrice(spec.amount, FEE_PERCENT);
@@ -259,6 +268,7 @@ async function main() {
         endTime: spec.end,
         offeredAmount: price.offeredAmount,
         platformFee: price.platformFee,
+        workerAmount: price.workerAmount,
         totalAmount: price.totalAmount,
         status: spec.status,
         publishedAt: new Date(),
@@ -268,9 +278,9 @@ async function main() {
             receiverId: spec.worker?.id ?? null,
             grossAmount: price.totalAmount,
             platformFee: price.platformFee,
-            workerAmount: price.offeredAmount,
+            workerAmount: price.workerAmount,
             status: isReleased ? 'RELEASED' : spec.status === 'CANCELLED' ? 'REFUNDED' : 'HELD',
-            provider: 'mock',
+            provider: 'card',
             transactionId: `ch_seed_${created}`,
             paidAt: new Date(),
             releasedAt: isReleased ? new Date() : null,
@@ -322,7 +332,7 @@ async function main() {
       if (spec.status === 'MATCHED' || spec.status === 'IN_PROGRESS' || spec.status === 'COMPLETION_PENDING' || spec.status === 'DISPUTED') {
         await prisma.profile.update({
           where: { userId: spec.worker.id },
-          data: { pendingBalance: { increment: price.offeredAmount } },
+          data: { pendingBalance: { increment: price.workerAmount } },
         });
       }
 
@@ -351,8 +361,8 @@ async function main() {
           userId: spec.worker.id,
           orderId: order.id,
           type: 'TASK_INCOME',
-          amount: price.offeredAmount,
-          balanceAfter: price.offeredAmount,
+          amount: price.workerAmount,
+          balanceAfter: price.workerAmount,
           note: spec.title,
         },
       });
@@ -361,7 +371,7 @@ async function main() {
           userId: spec.buyer.id,
           orderId: order.id,
           type: 'ORDER_PAYMENT',
-          amount: -price.offeredAmount,
+          amount: -price.workerAmount,
           balanceAfter: 0,
           note: spec.title,
         },
