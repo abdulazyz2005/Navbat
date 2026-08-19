@@ -12,8 +12,8 @@ import { Availability } from './pages/Availability';
 import { Chat, ChatList } from './pages/Chat';
 import { Legal, Profile } from './pages/Profile';
 import { Balance } from './pages/Balance';
+import { Payment } from './pages/Payment';
 import { MyDisputes, Notifications } from './pages/Notifications';
-import { Admin } from './pages/Admin';
 
 function Shell() {
   const { me, loading, error } = useAuth();
@@ -53,10 +53,11 @@ function Shell() {
         <Route path="/chat/:id" element={<Chat />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/balance" element={<Balance />} />
+        <Route path="/pay/:orderId" element={<Payment />} />
+        <Route path="/topup" element={<Payment />} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/disputes" element={<MyDisputes />} />
         <Route path="/legal" element={<Legal />} />
-        <Route path="/admin" element={<Admin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
