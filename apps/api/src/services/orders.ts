@@ -15,8 +15,8 @@ import {
 import { env } from '../env.js';
 import { prisma } from '../lib/prisma.js';
 import { fromDateString, orderInclude, todayString, type OrderWithRelations } from '../lib/dto.js';
-import { getPaymentProvider } from '../payments/index.js';
 import { addTotals, creditAvailable, movePending } from './ledger.js';
+import { confirmIntent } from './payment-intents.js';
 import { notify } from './notifications.js';
 
 /* ------------------------------------------------------------------ helpers */
@@ -80,6 +80,7 @@ export async function createOrder(buyerId: string, input: CreateOrderInput) {
       endTime: input.endTime,
       offeredAmount: price.offeredAmount,
       platformFee: price.platformFee,
+      workerAmount: price.workerAmount,
       totalAmount: price.totalAmount,
       status: 'DRAFT',
       payment: {
@@ -87,9 +88,9 @@ export async function createOrder(buyerId: string, input: CreateOrderInput) {
           payerId: buyerId,
           grossAmount: price.totalAmount,
           platformFee: price.platformFee,
-          workerAmount: price.offeredAmount,
+          workerAmount: price.workerAmount,
           status: 'PENDING',
-          provider: getPaymentProvider().name,
+          provider: 'card', // karta-karta o'tkazma, admin tasdig'i bilan
         },
       },
     },
@@ -117,46 +118,28 @@ export async function payAndPublishOrder(buyerId: string, orderId: string) {
   const profile = await prisma.profile.findUnique({ where: { userId: buyerId } });
   if (!profile) throw new AppError('NOT_FOUND', 404);
 
-  // Balansda yetmagan qismini tashqi provayder orqali to'ldiramiz
-  const shortfall = Math.max(0, order.totalAmount - profile.availableBalance);
-  let chargeTxId: string | null = null;
-
+  /**
+   * Pul balansdan yechiladi. Balans karta orqali to'ldiriladi:
+   * foydalanuvchi platforma kartasiga unikal summa yuboradi, admin chekni
+   * tasdiqlaydi (`services/payment-intents.ts`). Shu tufayli hech qanday
+   * tashqi provayder kerak emas va pul hech qachon "yo'lda" qolib ketmaydi.
+   */
+  const shortfall = order.totalAmount - profile.availableBalance;
   if (shortfall > 0) {
-    const provider = getPaymentProvider();
-    const result = await provider.charge({
-      paymentId: payment.id,
-      orderId: order.id,
-      payerId: buyerId,
-      amount: shortfall,
-      description: `NAVBAT — ${order.title}`,
+    throw new AppError('INSUFFICIENT_BALANCE', 402, {
+      required: order.totalAmount,
+      available: profile.availableBalance,
+      shortfall,
     });
-    if (!result.success) {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: 'FAILED' },
-      });
-      throw new AppError('INVALID_AMOUNT', 402, { reason: result.failureReason });
-    }
-    chargeTxId = result.transactionId;
   }
 
   await prisma.$transaction(async (tx) => {
-    if (shortfall > 0) {
-      await creditAvailable({
-        tx,
-        userId: buyerId,
-        type: 'TOP_UP',
-        amount: shortfall,
-        orderId: order.id,
-        note: 'Buyurtma uchun to‘lov',
-      });
-    }
-    // Ikki qatorli hisob: navbatchi ulushi + platforma komissiyasi
+    // Ikki qatorli hisob: navbatchi ulushi + platforma xizmat haqi
     await creditAvailable({
       tx,
       userId: buyerId,
       type: 'ORDER_PAYMENT',
-      amount: -order.offeredAmount,
+      amount: -order.workerAmount,
       orderId: order.id,
       note: 'Navbatchi uchun (escrowda)',
     });
@@ -174,7 +157,6 @@ export async function payAndPublishOrder(buyerId: string, orderId: string) {
       data: {
         status: 'HELD',
         paidAt: new Date(),
-        transactionId: chargeTxId,
       },
     });
 
@@ -242,7 +224,7 @@ export async function notifyMatchingWorkers(orderId: string): Promise<number> {
       userId: availability.workerId,
       type: 'NEW_MATCHING_ORDER',
       title: 'Sizga mos yangi topshiriq',
-      body: `${ORDER_CATEGORY_LABELS[order.category]} — ${order.locationName}\n${order.startTime}–${order.endTime} · ${formatUZS(order.offeredAmount)} · Moslik: ${match.score}%`,
+      body: `${ORDER_CATEGORY_LABELS[order.category]} — ${order.locationName}\n${order.startTime}–${order.endTime} · ${formatUZS(order.workerAmount)} qo‘lga · Moslik: ${match.score}%`,
       orderId: order.id,
       deepLink: `/orders/${order.id}`,
     });
@@ -266,36 +248,21 @@ export async function raiseOrderPrice(buyerId: string, orderId: string, newAmoun
   const profile = await prisma.profile.findUnique({ where: { userId: buyerId } });
   if (!profile) throw new AppError('NOT_FOUND', 404);
 
-  const shortfall = Math.max(0, delta - profile.availableBalance);
-  let chargeTxId: string | null = null;
-  if (shortfall > 0) {
-    const result = await getPaymentProvider().charge({
-      paymentId: payment.id,
-      orderId: order.id,
-      payerId: buyerId,
-      amount: shortfall,
-      description: `NAVBAT — taklifni oshirish: ${order.title}`,
+  // Farq balansdan yechiladi — yetmasa avval kartadan to'ldiriladi
+  if (delta > profile.availableBalance) {
+    throw new AppError('INSUFFICIENT_BALANCE', 402, {
+      required: delta,
+      available: profile.availableBalance,
+      shortfall: delta - profile.availableBalance,
     });
-    if (!result.success) throw new AppError('INVALID_AMOUNT', 402);
-    chargeTxId = result.transactionId;
   }
 
   await prisma.$transaction(async (tx) => {
-    if (shortfall > 0) {
-      await creditAvailable({
-        tx,
-        userId: buyerId,
-        type: 'TOP_UP',
-        amount: shortfall,
-        orderId: order.id,
-        note: 'Taklifni oshirish uchun to‘lov',
-      });
-    }
     await creditAvailable({
       tx,
       userId: buyerId,
       type: 'ORDER_PAYMENT',
-      amount: -(price.offeredAmount - order.offeredAmount),
+      amount: -(price.workerAmount - order.workerAmount),
       orderId: order.id,
       note: 'Taklif oshirildi (escrowda)',
     });
@@ -313,6 +280,7 @@ export async function raiseOrderPrice(buyerId: string, orderId: string, newAmoun
       data: {
         offeredAmount: price.offeredAmount,
         platformFee: price.platformFee,
+        workerAmount: price.workerAmount,
         totalAmount: price.totalAmount,
         priceRaises: { increment: 1 },
       },
@@ -322,8 +290,7 @@ export async function raiseOrderPrice(buyerId: string, orderId: string, newAmoun
       data: {
         grossAmount: price.totalAmount,
         platformFee: price.platformFee,
-        workerAmount: price.offeredAmount,
-        transactionId: chargeTxId ?? payment.transactionId,
+        workerAmount: price.workerAmount,
       },
     });
   });
@@ -392,8 +359,8 @@ export async function acceptOrder(workerId: string, orderId: string) {
         data: { receiverId: workerId },
       });
     }
-    // Navbatchining "kutilayotgan" balansiga qo'shiladi
-    await movePending(tx, workerId, order.offeredAmount);
+    // Navbatchining "kutilayotgan" balansiga xizmat haqi ushlangan summa qo'shiladi
+    await movePending(tx, workerId, order.workerAmount);
   });
 
   const worker = await prisma.user.findUnique({ where: { id: workerId } });
@@ -410,7 +377,7 @@ export async function acceptOrder(workerId: string, orderId: string) {
     userId: workerId,
     type: 'ORDER_ACCEPTED',
     title: 'Topshiriq qabul qilindi',
-    body: `${order.locationName} · ${order.startTime}–${order.endTime} · ${formatUZS(order.offeredAmount)}`,
+    body: `${order.locationName} · ${order.startTime}–${order.endTime} · ${formatUZS(order.workerAmount)} qo‘lga tegadi`,
     orderId: order.id,
     deepLink: `/orders/${order.id}`,
   });
@@ -540,14 +507,6 @@ export async function confirmOrder(buyerId: string, orderId: string) {
   if (!payment) throw new AppError('PAYMENT_NOT_FOUND', 404);
   if (payment.status !== 'HELD') throw new AppError('PAYMENT_NOT_HELD', 409);
 
-  const transfer = await getPaymentProvider().release({
-    paymentId: payment.id,
-    transactionId: payment.transactionId ?? '',
-    receiverId: assignment.workerId,
-    amount: payment.workerAmount,
-  });
-  if (!transfer.success) throw new AppError('INTERNAL_ERROR', 502);
-
   await prisma.$transaction(async (tx) => {
     assertPaymentTransition(payment.status, 'RELEASED');
     await tx.order.updateMany({
@@ -629,7 +588,7 @@ export async function cancelOrder(userId: string, orderId: string, reason?: stri
           where: { id: assignment.id },
           data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason ?? null },
         });
-        await movePending(tx, assignment.workerId, -order.offeredAmount);
+        await movePending(tx, assignment.workerId, -order.workerAmount);
       }
       // MATCHEDdan keyingi bekor qilish buyurtmachining cancellation rate'iga yoziladi
       if (order.status === 'MATCHED') {
@@ -665,7 +624,7 @@ export async function cancelOrder(userId: string, orderId: string, reason?: stri
       where: { id: assignment.id },
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason ?? null },
     });
-    await movePending(tx, assignment.workerId, -order.offeredAmount);
+    await movePending(tx, assignment.workerId, -order.workerAmount);
     await tx.profile.update({
       where: { userId: assignment.workerId },
       data: { cancelledOrders: { increment: 1 } },
@@ -697,14 +656,6 @@ export async function refundPayment(orderId: string, reason: string) {
   if (!payment) return;
   if (payment.status !== 'HELD' && payment.status !== 'PAID') return;
 
-  const result = await getPaymentProvider().refund({
-    paymentId: payment.id,
-    transactionId: payment.transactionId ?? '',
-    amount: payment.grossAmount,
-    reason,
-  });
-  if (!result.success) throw new AppError('INTERNAL_ERROR', 502);
-
   await prisma.$transaction(async (tx) => {
     assertPaymentTransition(payment.status, 'REFUNDED');
     await tx.payment.update({
@@ -720,6 +671,32 @@ export async function refundPayment(orderId: string, reason: string) {
       note: reason,
     });
   });
+}
+
+/* --------------------------------------------- karta to'lovi -> buyurtma */
+
+/**
+ * Admin karta to'lovini tasdiqlaydi va (agar to'lov buyurtma uchun bo'lsa)
+ * buyurtmani darhol e'lon qiladi. Ikkalasi bitta joyda turadi, chunki
+ * foydalanuvchi uchun bu bitta amal: "to'lovim tasdiqlandi -> e'lonim chiqdi".
+ */
+export async function confirmIntentAndPublish(intentId: string, adminId: string) {
+  const result = await confirmIntent(intentId, adminId);
+  const orderId = result.intent.orderId;
+  if (!orderId) return result;
+
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order || order.status !== 'DRAFT') return result;
+
+  try {
+    await payAndPublishOrder(order.buyerId, order.id);
+    return { ...result, publishedOrderId: order.id };
+  } catch (error) {
+    // Balans yetmasa (masalan foydalanuvchi kamroq yuborgan) — pul balansda qoladi,
+    // buyurtma DRAFT holatida turadi. Foydalanuvchi qolganini to'ldiradi.
+    console.error('[navbat] to‘lov tasdiqlandi, lekin e’lon qilinmadi:', error);
+    return result;
+  }
 }
 
 /* ----------------------------------------------------------------- dispute */
