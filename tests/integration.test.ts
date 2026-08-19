@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  adminLogin,
   authed,
   dayOffset,
   login,
@@ -7,14 +8,18 @@ import {
   resetDb,
   sampleAvailability,
   sampleOrder,
+  topUp,
 } from './helpers.js';
 
 /**
  * To'liq end-to-end oqim:
- * Buyer order yaratadi -> to'laydi (escrow HELD) -> Worker qabul qiladi ->
- * check-in -> boshlaydi -> yakunlaydi -> Buyer tasdiqlaydi -> payment RELEASED ->
- * balans +50 000 -> reyting -> pul yechish.
+ * Buyer order yaratadi -> kartadan to'laydi (admin tasdiqlaydi) -> escrow HELD ->
+ * Worker qabul qiladi -> check-in -> boshlaydi -> yakunlaydi -> Buyer tasdiqlaydi ->
+ * payment RELEASED -> navbatchi balansi +45 000 (10% ushlangan) -> reyting -> pul yechish.
  */
+
+/** Standart test buyurtmasi narxi (helpers.sampleOrder bilan bir xil) */
+const ORDER_AMOUNT = 50000;
 
 let buyer: { token: string; userId: string };
 let worker: { token: string; userId: string };
@@ -45,25 +50,37 @@ describe('to‘liq demo ssenariy', () => {
     expect(createRes.status).toBe(201);
     const order = createRes.body;
     expect(order.status).toBe('DRAFT');
+    // Yangi model: buyurtmachi 50 000 to'laydi, navbatchi 45 000 oladi
     expect(order.offeredAmount).toBe(50000);
     expect(order.platformFee).toBe(5000);
-    expect(order.totalAmount).toBe(55000);
+    expect(order.workerAmount).toBe(45000);
+    expect(order.totalAmount).toBe(50000);
     expect(order.payment.status).toBe('PENDING');
 
-    // 3. To'lov -> escrow HELD, buyurtma PUBLISHED
+    // 3. Balans bo'sh — to'lov rad etiladi va yetishmayotgan summa qaytariladi
+    const noBalance = await B.post(`/orders/${order.id}/pay`).send({});
+    expect(noBalance.status).toBe(402);
+    expect(noBalance.body.error.code).toBe('INSUFFICIENT_BALANCE');
+    expect(noBalance.body.error.details.shortfall).toBe(50000);
+
+    // 4. Karta orqali to'lov: unikal summa -> chek -> admin tasdig'i
+    const credited = await topUp(buyer, 50000);
+    expect(credited).toBeGreaterThanOrEqual(50000);
+
     const payRes = await B.post(`/orders/${order.id}/pay`).send({});
     expect(payRes.status).toBe(200);
     expect(payRes.body.status).toBe('PUBLISHED');
     expect(payRes.body.payment.status).toBe('HELD');
 
-    // Buyurtmachining hisobi: TOP_UP +55 000, ORDER_PAYMENT -50 000, PLATFORM_FEE -5 000
+    // Buyurtmachining hisobi: TOP_UP, ORDER_PAYMENT -45 000, PLATFORM_FEE -5 000
     const buyerTx = await authed(buyer.token).get('/balance/transactions');
     const types = buyerTx.body.items.map((t: { type: string }) => t.type);
     expect(types).toContain('TOP_UP');
     expect(types).toContain('ORDER_PAYMENT');
     expect(types).toContain('PLATFORM_FEE');
     const buyerBalance = await B.get('/balance');
-    expect(buyerBalance.body.availableBalance).toBe(0);
+    // Unikal qo'shimcha (1..999) balansda qoladi
+    expect(buyerBalance.body.availableBalance).toBe(credited - 50000);
 
     // 4. Feedda ko'rinadi va moslik ballari yuqori
     const feed = await W.get('/orders/feed');
@@ -81,7 +98,7 @@ describe('to‘liq demo ssenariy', () => {
 
     // Escrow puli navbatchining "kutilmoqda" balansida
     const pending = await W.get('/balance');
-    expect(pending.body.pendingBalance).toBe(50000);
+    expect(pending.body.pendingBalance).toBe(45000);
     expect(pending.body.availableBalance).toBe(0);
 
     // 6. Chat matched bo'lgandan keyin ochiladi
@@ -121,14 +138,14 @@ describe('to‘liq demo ssenariy', () => {
 
     // 11. Navbatchi balansi: +50 000 mavjud, kutilayotgan 0
     const finalBalance = await W.get('/balance');
-    expect(finalBalance.body.availableBalance).toBe(50000);
+    expect(finalBalance.body.availableBalance).toBe(45000);
     expect(finalBalance.body.pendingBalance).toBe(0);
-    expect(finalBalance.body.totalEarned).toBe(50000);
+    expect(finalBalance.body.totalEarned).toBe(45000);
 
     // 12. Platforma daromadi = 5 000
     const payment = await prisma.payment.findUnique({ where: { orderId: order.id } });
     expect(payment?.platformFee).toBe(5000);
-    expect(payment?.workerAmount).toBe(50000);
+    expect(payment?.workerAmount).toBe(45000);
     expect(payment?.status).toBe('RELEASED');
 
     // 13. Reytinglar
@@ -213,6 +230,7 @@ describe('bekor qilish va qaytarish', () => {
   async function publishedOrder() {
     const B = authed(buyer.token);
     const created = await B.post('/orders').send(sampleOrder());
+    await topUp(buyer, ORDER_AMOUNT);
     await B.post(`/orders/${created.body.id}/pay`).send({});
     return created.body.id as string;
   }
@@ -225,8 +243,9 @@ describe('bekor qilish va qaytarish', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('CANCELLED');
 
+    // To'langan summa to'liq qaytadi (balansda unikal qo'shimcha ham qoladi)
     const balance = await B.get('/balance');
-    expect(balance.body.availableBalance).toBe(55000);
+    expect(balance.body.availableBalance).toBeGreaterThanOrEqual(ORDER_AMOUNT);
 
     const payment = await prisma.payment.findUnique({ where: { orderId } });
     expect(payment?.status).toBe('REFUNDED');
@@ -270,19 +289,25 @@ describe('taklifni oshirish (dynamic price)', () => {
   it('summani oshiradi va komissiyani qayta hisoblaydi', async () => {
     const B = authed(buyer.token);
     const created = await B.post('/orders').send(sampleOrder());
+    await topUp(buyer, ORDER_AMOUNT);
     await B.post(`/orders/${created.body.id}/pay`).send({});
+
+    // Farqni to'lash uchun balansni to'ldiramiz (20 000)
+    await topUp(buyer, 20000);
 
     const res = await B.post(`/orders/${created.body.id}/raise-price`).send({ amount: 70000 });
     expect(res.status).toBe(200);
     expect(res.body.offeredAmount).toBe(70000);
     expect(res.body.platformFee).toBe(7000);
-    expect(res.body.totalAmount).toBe(77000);
+    expect(res.body.workerAmount).toBe(63000);
+    expect(res.body.totalAmount).toBe(70000);
     expect(res.body.priceRaises).toBe(1);
   });
 
   it('summani kamaytirishga ruxsat bermaydi', async () => {
     const B = authed(buyer.token);
     const created = await B.post('/orders').send(sampleOrder());
+    await topUp(buyer, ORDER_AMOUNT);
     await B.post(`/orders/${created.body.id}/pay`).send({});
     const res = await B.post(`/orders/${created.body.id}/raise-price`).send({ amount: 40000 });
     expect(res.status).toBe(400);
@@ -296,6 +321,7 @@ describe('nizo (dispute)', () => {
     const W = authed(worker.token);
     const created = await B.post('/orders').send(sampleOrder());
     const orderId = created.body.id;
+    await topUp(buyer, ORDER_AMOUNT);
     await B.post(`/orders/${orderId}/pay`).send({});
     await W.post(`/orders/${orderId}/accept`).send({});
     await W.post(`/orders/${orderId}/start`).send({});
@@ -313,11 +339,12 @@ describe('nizo (dispute)', () => {
   });
 
   it('admin nizoni navbatchi foydasiga hal qiladi -> to‘lov chiqariladi', async () => {
-    const admin = await login({ id: 900000001, first_name: 'Admin' });
+    const admin = await adminLogin();
     const B = authed(buyer.token);
     const W = authed(worker.token);
     const created = await B.post('/orders').send(sampleOrder());
     const orderId = created.body.id;
+    await topUp(buyer, ORDER_AMOUNT);
     await B.post(`/orders/${orderId}/pay`).send({});
     await W.post(`/orders/${orderId}/accept`).send({});
     await W.post(`/orders/${orderId}/start`).send({});
@@ -335,15 +362,16 @@ describe('nizo (dispute)', () => {
     expect(resolved.body.status).toBe('COMPLETED');
 
     const balance = await W.get('/balance');
-    expect(balance.body.availableBalance).toBe(50000);
+    expect(balance.body.availableBalance).toBe(45000);
   });
 
   it('admin nizoni buyurtmachi foydasiga hal qiladi -> pul qaytariladi', async () => {
-    const admin = await login({ id: 900000001, first_name: 'Admin' });
+    const admin = await adminLogin();
     const B = authed(buyer.token);
     const W = authed(worker.token);
     const created = await B.post('/orders').send(sampleOrder());
     const orderId = created.body.id;
+    await topUp(buyer, ORDER_AMOUNT);
     await B.post(`/orders/${orderId}/pay`).send({});
     await W.post(`/orders/${orderId}/accept`).send({});
     await B.post(`/orders/${orderId}/dispute`).send({ reason: 'WORKER_NO_SHOW' });
@@ -357,7 +385,7 @@ describe('nizo (dispute)', () => {
     expect(resolved.body.status).toBe('REFUNDED');
 
     const buyerBalance = await B.get('/balance');
-    expect(buyerBalance.body.availableBalance).toBe(55000);
+    expect(buyerBalance.body.availableBalance).toBeGreaterThanOrEqual(ORDER_AMOUNT);
 
     const workerMe = await W.get('/users/me');
     expect(workerMe.body.profile.cancelledOrders).toBe(1);
@@ -401,6 +429,7 @@ describe('matching feed', () => {
     await W.post('/availability').send(sampleAvailability({ startTime: '08:00', endTime: '10:00' }));
 
     const created = await B.post('/orders').send(sampleOrder());
+    await topUp(buyer, ORDER_AMOUNT);
     await B.post(`/orders/${created.body.id}/pay`).send({});
 
     const feed = await W.get('/orders/feed');
@@ -416,8 +445,10 @@ describe('matching feed', () => {
     await W.post('/availability').send(sampleAvailability());
 
     const cheap = await B.post('/orders').send(sampleOrder({ offeredAmount: 30000 }));
+    await topUp(buyer, 30000);
     await B.post(`/orders/${cheap.body.id}/pay`).send({});
     const rich = await B.post('/orders').send(sampleOrder({ offeredAmount: 90000 }));
+    await topUp(buyer, 90000);
     await B.post(`/orders/${rich.body.id}/pay`).send({});
 
     const feed = await W.get('/orders/feed?sort=highest_pay');
@@ -427,6 +458,7 @@ describe('matching feed', () => {
   it('bo‘sh vaqt yozuvi mos topshiriqlar sonini ko‘rsatadi', async () => {
     const B = authed(buyer.token);
     const created = await B.post('/orders').send(sampleOrder());
+    await topUp(buyer, ORDER_AMOUNT);
     await B.post(`/orders/${created.body.id}/pay`).send({});
 
     const res = await authed(worker.token).post('/availability').send(sampleAvailability());

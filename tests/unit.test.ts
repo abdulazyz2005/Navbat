@@ -17,25 +17,35 @@ import {
 /* ------------------------------------------------------------ komissiya */
 
 describe('komissiya hisobi', () => {
-  it('README ssenariysi: 50 000 -> 5 000 komissiya, 55 000 jami', () => {
+  it('50 000 -> buyurtmachi 50 000 to‘laydi, navbatchi 45 000 oladi', () => {
     const price = calculatePrice(50000, 10);
     expect(price.offeredAmount).toBe(50000);
     expect(price.platformFee).toBe(5000);
-    expect(price.totalAmount).toBe(55000);
+    expect(price.workerAmount).toBe(45000);
+    expect(price.totalAmount).toBe(50000);
   });
 
-  it('navbatchi doim to‘liq taklif summasini oladi', () => {
+  it('buyurtmachi doim e’londagi summani to‘laydi (ustiga qo‘shilmaydi)', () => {
     for (const amount of [10000, 33333, 47777, 999999]) {
-      expect(calculatePrice(amount, 10).offeredAmount).toBe(amount);
+      expect(calculatePrice(amount, 10).totalAmount).toBe(amount);
+    }
+  });
+
+  it('komissiya + navbatchi ulushi = to‘langan summa (bir tiyin ham yo‘qolmaydi)', () => {
+    for (const amount of [10000, 33333, 47777, 999999]) {
+      const price = calculatePrice(amount, 10);
+      expect(price.platformFee + price.workerAmount).toBe(price.totalAmount);
     }
   });
 
   it('natija har doim butun son (floating point yo‘q)', () => {
     const price = calculatePrice(33333, 10);
     expect(Number.isInteger(price.platformFee)).toBe(true);
+    expect(Number.isInteger(price.workerAmount)).toBe(true);
     expect(Number.isInteger(price.totalAmount)).toBe(true);
     expect(price.platformFee).toBe(3333); // pastga yaxlitlanadi
-    expect(price.totalAmount).toBe(36666);
+    expect(price.workerAmount).toBe(30000);
+    expect(price.totalAmount).toBe(33333);
   });
 
   it('komissiya foizi konfiguratsiya orqali o‘zgaradi', () => {

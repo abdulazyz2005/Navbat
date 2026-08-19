@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   API,
   TEST_BOT_TOKEN,
+  adminLogin,
   app,
   authed,
   login,
@@ -11,6 +12,7 @@ import {
   resetDb,
   sampleAvailability,
   sampleOrder,
+  topUp,
 } from './helpers.js';
 import { signInitData } from '../apps/api/src/lib/telegram-auth.js';
 
@@ -51,6 +53,7 @@ async function matchedOrder() {
   const W = authed(worker.token);
   await W.post('/availability').send(sampleAvailability());
   const created = await B.post('/orders').send(sampleOrder());
+  await topUp(buyer, 50000);
   await B.post(`/orders/${created.body.id}/pay`).send({});
   await W.post(`/orders/${created.body.id}/accept`).send({});
   return created.body.id as string;
@@ -213,6 +216,7 @@ describe('buyurtma egaligi', () => {
   it('matched bo‘lmagan buyurtmada chat ochilmaydi', async () => {
     const B = authed(buyer.token);
     const created = await B.post('/orders').send(sampleOrder());
+    await topUp(buyer, 50000);
     await B.post(`/orders/${created.body.id}/pay`).send({});
     const res = await B.get(`/orders/${created.body.id}/messages`);
     expect(res.status).toBe(409);
@@ -278,15 +282,15 @@ describe('rol oshirish (role escalation)', () => {
     expect(profile?.completedOrders).toBe(0);
   });
 
-  it('admin nizoni hal qila oladi, oddiy foydalanuvchi yo‘q', async () => {
-    const admin = await login({ id: 900000001, first_name: 'Admin' });
+  it('admin panel sessiyasi bilan statistika ochiladi', async () => {
+    const admin = await adminLogin();
     const stats = await authed(admin.token).get('/admin/stats');
     expect(stats.status).toBe(200);
     expect(typeof stats.body.gmv).toBe('number');
   });
 
   it('admin o‘zini bloklab qo‘ya olmaydi', async () => {
-    const admin = await login({ id: 900000001, first_name: 'Admin' });
+    const admin = await adminLogin();
     const res = await authed(admin.token)
       .post(`/admin/users/${admin.userId}/ban`)
       .send({ banned: true });
@@ -320,6 +324,8 @@ describe('holat mashinasi himoyasi', () => {
   it('ikki marta to‘lab bo‘lmaydi (ikki marta yechilmaydi)', async () => {
     const B = authed(buyer.token);
     const created = await B.post('/orders').send(sampleOrder());
+    // Balansda ikki marta to'lashga yetadigan pul bo'lsa ham, ikkinchisi o'tmaydi
+    await topUp(buyer, 200000);
     await B.post(`/orders/${created.body.id}/pay`).send({});
     const second = await B.post(`/orders/${created.body.id}/pay`).send({});
     expect(second.status).toBe(409);
