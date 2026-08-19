@@ -34,6 +34,18 @@ export function errorHandler(
     return;
   }
 
+  // Juda katta body (masalan chek rasmi) — 413 qaytariladi
+  if (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { type?: string }).type === 'entity.too.large'
+  ) {
+    res.status(413).json({
+      error: { code: 'RECEIPT_TOO_LARGE', message: errorMessage('RECEIPT_TOO_LARGE') },
+    });
+    return;
+  }
+
   // State machine xatolari matn sifatida keladi
   if (err instanceof Error && err.message.startsWith('ILLEGAL_')) {
     const code = err.message.split(':')[0];
