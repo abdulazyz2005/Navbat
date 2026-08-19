@@ -1,6 +1,5 @@
 import { errorMessage } from '@navbat/shared';
 import type {
-  AdminStats,
   AvailabilityDTO,
   BalanceDTO,
   CheckInDTO,
@@ -12,96 +11,40 @@ import type {
   NotificationDTO,
   OrderDTO,
   Paginated,
+  PaymentIntentDTO,
   RatingDTO,
   TransactionDTO,
   WithdrawalDTO,
 } from '@navbat/shared';
+import { ApiError, createClient, createTokenStore } from './http';
 import { getInitData } from './telegram';
 
 /**
- * API bazaviy manzili.
+ * MINI APP API MIJOZI (faqat foydalanuvchi imkoniyatlari).
  *
- * Bitta servis rejimida (production) frontend va API bir originda turadi —
- * shuning uchun `VITE_API_URL` bo'sh qoldiriladi va so'rovlar `/api/...` ga ketadi.
- * Alohida hostingda `VITE_API_URL=https://api.example.com` ko'rsatiladi.
+ * Admin endpointlari BU YERDA YO'Q — ular alohida ilovada (`src/admin`).
+ * Mini App tokeni serverda `scope='app'` bilan beriladi va admin
+ * endpointlariga umuman o'tmaydi.
  */
-const API_BASE = `${(import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '')}/api`;
-const TOKEN_KEY = 'navbat.token';
 
-let token: string | null = null;
+const tokens = createTokenStore('navbat.token', 'session');
+const client = createClient(tokens);
 
-export function getToken(): string | null {
-  if (token) return token;
+export { ApiError };
+export const getToken = () => tokens.get();
+export const setToken = (value: string | null) => tokens.set(value);
+
+async function reauth(): Promise<boolean> {
   try {
-    token = sessionStorage.getItem(TOKEN_KEY);
-  } catch {
-    token = null;
-  }
-  return token;
-}
-
-export function setToken(value: string | null): void {
-  token = value;
-  try {
-    if (value) sessionStorage.setItem(TOKEN_KEY, value);
-    else sessionStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* sessionStorage mavjud bo'lmasa xotirada saqlanadi */
-  }
-}
-
-export class ApiError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly status: number,
-    public readonly details?: unknown,
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
-
-async function call<T>(
-  path: string,
-  options: { method?: string; body?: unknown; retry?: boolean } = {},
-): Promise<T> {
-  const { method = 'GET', body, retry = true } = options;
-
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const current = getToken();
-  if (current) headers.Authorization = `Bearer ${current}`;
-
-  const response = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-
-  if (response.status === 401 && retry && path !== '/auth/telegram') {
-    // Sessiya tugagan — qayta login qilib ko'ramiz
-    setToken(null);
     await authenticate();
-    return call<T>(path, { ...options, retry: false });
+    return true;
+  } catch {
+    return false;
   }
+}
 
-  if (!response.ok) {
-    let code = 'INTERNAL_ERROR';
-    let details: unknown;
-    try {
-      const payload = (await response.json()) as {
-        error?: { code?: string; message?: string; details?: unknown };
-      };
-      code = payload.error?.code ?? code;
-      details = payload.error?.details;
-    } catch {
-      /* JSON bo'lmasa standart xabar */
-    }
-    throw new ApiError(code, errorMessage(code), response.status, details);
-  }
-
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+function call<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+  return client.call<T>(path, { ...options, onUnauthorized: reauth });
 }
 
 export async function authenticate(): Promise<void> {
@@ -113,10 +56,9 @@ export async function authenticate(): Promise<void> {
       401,
     );
   }
-  const result = await call<{ token: string }>('/auth/telegram', {
+  const result = await client.call<{ token: string }>('/auth/telegram', {
     method: 'POST',
     body: { initData },
-    retry: false,
   });
   setToken(result.token);
 }
@@ -131,7 +73,16 @@ export const api = {
     }>('/config'),
 
   me: () => call<MeResponse>('/users/me'),
-  updateMe: (data: Partial<{ roleMode: string; onboarded: boolean; city: string; phone: string }>) =>
+  updateMe: (
+    data: Partial<{
+      roleMode: string;
+      onboarded: boolean;
+      city: string;
+      phone: string;
+      cardNumber: string;
+      cardHolder: string;
+    }>,
+  ) =>
     call<{ ok: boolean }>('/users/me', { method: 'PATCH', body: data }),
   userRatings: (userId: string) => call<{ items: RatingDTO[] }>(`/users/${userId}/ratings`),
 
@@ -189,6 +140,15 @@ export const api = {
   cancelWithdrawal: (id: string) =>
     call<{ ok: boolean }>(`/withdrawals/${id}/cancel`, { method: 'POST', body: {} }),
 
+  // ------------------------------------------------- karta orqali to'lash
+  createIntent: (amount: number, orderId?: string) =>
+    call<PaymentIntentDTO>('/payments/intents', { method: 'POST', body: { amount, orderId } }),
+  activeIntent: () => call<PaymentIntentDTO | null>('/payments/intents/active'),
+  intent: (id: string) => call<PaymentIntentDTO>(`/payments/intents/${id}`),
+  myIntents: () => call<{ items: PaymentIntentDTO[] }>('/payments/intents'),
+  uploadReceipt: (id: string, image: string) =>
+    call<PaymentIntentDTO>(`/payments/intents/${id}/receipt`, { method: 'POST', body: { image } }),
+
   // ------------------------------------------------------ notifications
   notifications: () => call<{ items: NotificationDTO[] }>('/notifications'),
   markNotificationsRead: () =>
@@ -197,69 +157,4 @@ export const api = {
   // ----------------------------------------------------------- disputes
   disputes: () => call<{ items: DisputeDTO[] }>('/disputes'),
 
-  // -------------------------------------------------------------- admin
-  admin: {
-    stats: () => call<AdminStats>('/admin/stats'),
-    users: (q = '') => call<{ items: AdminUserRow[] }>(`/admin/users?q=${encodeURIComponent(q)}`),
-    banUser: (id: string, banned: boolean, reason?: string) =>
-      call<{ ok: boolean }>(`/admin/users/${id}/ban`, { method: 'POST', body: { banned, reason } }),
-    orders: (status = 'ALL') => call<{ items: OrderDTO[] }>(`/admin/orders?status=${status}`),
-    payments: (status = 'ALL') =>
-      call<{ items: AdminPaymentRow[] }>(`/admin/payments?status=${status}`),
-    disputes: (status = 'ALL') => call<{ items: DisputeDTO[] }>(`/admin/disputes?status=${status}`),
-    resolveDispute: (id: string, winner: 'BUYER' | 'WORKER', resolution: string) =>
-      call<OrderDTO>(`/admin/disputes/${id}/resolve`, {
-        method: 'POST',
-        body: { winner, resolution },
-      }),
-    withdrawals: (status = 'ALL') =>
-      call<{ items: AdminWithdrawalRow[] }>(`/admin/withdrawals?status=${status}`),
-    decideWithdrawal: (id: string, decision: string, note?: string) =>
-      call<{ ok: boolean }>(`/admin/withdrawals/${id}/decide`, {
-        method: 'POST',
-        body: { decision, note },
-      }),
-  },
 };
-
-export interface AdminUserRow {
-  id: string;
-  telegramId: string;
-  firstName: string;
-  lastName: string | null;
-  username: string | null;
-  isAdmin: boolean;
-  isBanned: boolean;
-  roleMode: string;
-  rating: number;
-  completedOrders: number;
-  cancelledOrders: number;
-  successRate: number;
-  availableBalance: number;
-  pendingBalance: number;
-  totalEarned: number;
-  totalSpent: number;
-  buyerOrders: number;
-  workerOrders: number;
-  createdAt: string;
-}
-
-export interface AdminPaymentRow {
-  id: string;
-  orderId: string;
-  orderTitle: string;
-  payer: string;
-  receiver: string | null;
-  grossAmount: number;
-  platformFee: number;
-  workerAmount: number;
-  status: string;
-  provider: string;
-  transactionId: string | null;
-  createdAt: string;
-  releasedAt: string | null;
-}
-
-export interface AdminWithdrawalRow extends WithdrawalDTO {
-  worker: { id: string; firstName: string };
-}
