@@ -42,6 +42,8 @@ usersRouter.get('/me', requireAuth, async (req, res, next) => {
         pendingBalance: user.profile.pendingBalance,
         city: user.profile.city,
         phone: user.profile.phone,
+        cardNumber: user.profile.cardNumber,
+        cardHolder: user.profile.cardHolder,
       },
       unreadNotifications: unread,
     };
@@ -51,17 +53,30 @@ usersRouter.get('/me', requireAuth, async (req, res, next) => {
   }
 });
 
+/**
+ * Foydalanuvchi FAQAT shu maydonlarni o'zgartira oladi.
+ * Balans, reyting, isAdmin — hech qachon bu yerdan o'zgarmaydi.
+ */
 const patchSchema = z.object({
   roleMode: z.enum(['BUYER', 'WORKER', 'BOTH']).optional(),
   onboarded: z.boolean().optional(),
   city: z.string().max(80).optional(),
   phone: z.string().max(30).optional(),
+  cardNumber: z.string().max(25).optional(),
+  cardHolder: z.string().max(80).optional(),
 });
 
 usersRouter.patch('/me', requireAuth, async (req, res, next) => {
   try {
     const me = currentUser(req);
     const data = patchSchema.parse(req.body);
+
+    if (data.cardNumber !== undefined) {
+      const digits = data.cardNumber.replace(/\D/g, '');
+      if (digits.length > 0 && digits.length !== 16) throw new AppError('INVALID_CARD', 400);
+      data.cardNumber = digits;
+    }
+
     const profile = await prisma.profile.update({
       where: { userId: me.id },
       data,

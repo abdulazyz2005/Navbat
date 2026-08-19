@@ -6,6 +6,7 @@ import { prisma } from '../lib/prisma.js';
 import { currentUser, requireAuth } from '../middleware/auth.js';
 import { writeLimiter } from '../middleware/rate-limit.js';
 import { mapTransaction, mapWithdrawal } from '../lib/dto.js';
+import { notifyAdminsAboutWithdrawal } from '../services/admin-bot.js';
 import { creditAvailable } from '../services/ledger.js';
 import { notify } from '../services/notifications.js';
 
@@ -97,6 +98,9 @@ withdrawalsRouter.post('/', requireAuth, writeLimiter, async (req, res, next) =>
         },
       });
     });
+
+    // Adminlarga: yangi payout so'rovi (karta va summa bilan)
+    void notifyAdminsAboutWithdrawal(withdrawal.id);
 
     res.status(201).json(mapWithdrawal(withdrawal));
   } catch (error) {

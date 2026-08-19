@@ -12,6 +12,20 @@ import {
   type UserWithProfile,
 } from '../lib/dto.js';
 import { resolveDispute } from '../services/disputes.js';
+import { decideWithdrawal } from '../services/withdrawals.js';
+import {
+  getIntentOrThrow,
+  mapIntent,
+  rejectIntent,
+} from '../services/payment-intents.js';
+import { confirmIntentAndPublish } from '../services/orders.js';
+import {
+  formatCard,
+  getPlatformCard,
+  isValidCard,
+  normalizeCard,
+  setPlatformCard,
+} from '../services/settings.js';
 import { creditAvailable } from '../services/ledger.js';
 import { notify } from '../services/notifications.js';
 import { expireStaleOrders } from '../services/orders.js';
@@ -271,14 +285,22 @@ adminRouter.get('/withdrawals', async (req, res, next) => {
     const status = req.query.status ? String(req.query.status) : undefined;
     const rows = await prisma.withdrawal.findMany({
       where: status && status !== 'ALL' ? { status: status as never } : {},
-      include: { worker: true },
+      include: { worker: { include: { profile: true } } },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
     res.json({
       items: rows.map((row) => ({
         ...mapWithdrawal(row),
-        worker: { id: row.workerId, firstName: row.worker.firstName },
+        worker: {
+          id: row.workerId,
+          firstName: row.worker.firstName,
+          username: row.worker.username,
+          telegramId: row.worker.telegramId.toString(),
+          cardNumber: row.worker.profile?.cardNumber ?? null,
+          cardHolder: row.worker.profile?.cardHolder ?? null,
+          phone: row.worker.profile?.phone ?? null,
+        },
       })),
     });
   } catch (error) {
@@ -296,42 +318,122 @@ adminRouter.post('/withdrawals/:id/decide', async (req, res, next) => {
       })
       .parse(req.body);
 
-    const row = await prisma.withdrawal.findUnique({ where: { id: req.params.id } });
-    if (!row) throw new AppError('WITHDRAWAL_NOT_FOUND', 404);
-    if (row.status === 'COMPLETED' || row.status === 'REJECTED') {
-      throw new AppError('FORBIDDEN', 409);
-    }
-
-    await prisma.$transaction(async (tx) => {
-      await tx.withdrawal.update({
-        where: { id: row.id },
-        data: { status: decision, note: note ?? null },
-      });
-      if (decision === 'REJECTED') {
-        // Bloklangan summa qaytariladi
-        await creditAvailable({
-          tx,
-          userId: row.workerId,
-          type: 'REFUND',
-          amount: row.amount,
-          note: note ?? 'Pul yechish rad etildi',
-        });
-      }
-    });
-
-    await notify({
-      userId: row.workerId,
-      type: 'WITHDRAWAL_UPDATE',
-      title: 'Pul yechish holati yangilandi',
-      body:
-        decision === 'COMPLETED'
-          ? 'Pul yechish amalga oshirildi.'
-          : decision === 'REJECTED'
-            ? `Rad etildi. ${note ?? ''}`.trim()
-            : 'So‘rovingiz ko‘rib chiqilmoqda.',
-    });
-
+    await decideWithdrawal(req.params.id, decision, note);
     res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ------------------------------------------------- karta to'lovlari (chek) */
+
+/** GET /admin/intents?status=PENDING_REVIEW — tekshirilishi kerak bo'lgan to'lovlar */
+adminRouter.get('/intents', async (req, res, next) => {
+  try {
+    const status = req.query.status ? String(req.query.status) : 'PENDING_REVIEW';
+    const rows = await prisma.paymentIntent.findMany({
+      where: status === 'ALL' ? {} : { status: status as never },
+      include: { user: { include: { profile: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    res.json({
+      items: rows.map((row) => ({
+        ...mapIntent(row),
+        user: {
+          id: row.userId,
+          firstName: row.user.firstName,
+          username: row.user.username,
+          telegramId: row.user.telegramId.toString(),
+          phone: row.user.profile?.phone ?? null,
+        },
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** GET /admin/intents/:id/receipt — chek rasmi (faqat admin sessiyasi bilan) */
+adminRouter.get('/intents/:id/receipt', async (req, res, next) => {
+  try {
+    const intent = await getIntentOrThrow(req.params.id);
+    if (!intent.receiptData) throw new AppError('RECEIPT_REQUIRED', 404);
+    res.setHeader('Content-Type', intent.receiptMime ?? 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(Buffer.from(intent.receiptData));
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** POST /admin/intents/:id/confirm — pul keldi, balansga qo'shiladi */
+adminRouter.post('/intents/:id/confirm', async (req, res, next) => {
+  try {
+    const me = currentUser(req);
+    const result = await confirmIntentAndPublish(req.params.id, me.id);
+    res.json({
+      ok: true,
+      intent: mapIntent(result.intent),
+      credited: result.credited,
+      publishedOrderId: result.publishedOrderId,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** POST /admin/intents/:id/reject — pul kelmadi yoki summa mos emas */
+adminRouter.post('/intents/:id/reject', async (req, res, next) => {
+  try {
+    const me = currentUser(req);
+    const { reason } = z
+      .object({ reason: z.string().min(3).max(300) })
+      .parse(req.body);
+    const intent = await rejectIntent(req.params.id, me.id, reason);
+    res.json({ ok: true, intent: mapIntent(intent) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ------------------------------------------------------------- sozlamalar */
+
+/** GET /admin/settings — platforma kartasi */
+adminRouter.get('/settings', async (_req, res, next) => {
+  try {
+    const card = await getPlatformCard();
+    res.json({
+      card: card
+        ? { ...card, formatted: formatCard(card.cardNumber) }
+        : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** PUT /admin/settings/card — to'lov qabul qilinadigan kartani o'zgartirish */
+adminRouter.put('/settings/card', async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        cardNumber: z.string().min(16).max(25),
+        cardHolder: z.string().min(2).max(80),
+        bank: z.string().max(60).optional(),
+      })
+      .parse(req.body);
+
+    if (!isValidCard(input.cardNumber)) throw new AppError('INVALID_CARD', 400);
+
+    await setPlatformCard({
+      cardNumber: normalizeCard(input.cardNumber),
+      cardHolder: input.cardHolder.trim(),
+      bank: input.bank?.trim() ?? '',
+    });
+    const card = await getPlatformCard();
+    res.json({ ok: true, card });
   } catch (error) {
     next(error);
   }
