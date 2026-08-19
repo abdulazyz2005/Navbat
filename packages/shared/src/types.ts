@@ -48,6 +48,9 @@ export interface MeResponse {
     pendingBalance: number;
     city: string | null;
     phone: string | null;
+    /** Pul yechish uchun karta (faqat egasiga qaytariladi) */
+    cardNumber: string | null;
+    cardHolder: string | null;
   };
   unreadNotifications: number;
 }
@@ -69,6 +72,8 @@ export interface OrderDTO {
   endTime: string;
   offeredAmount: number;
   platformFee: number;
+  /** Navbatchi qo'liga tegadigan summa (offeredAmount - platformFee) */
+  workerAmount: number;
   totalAmount: number;
   status: OrderStatus;
   priceRaises: number;
@@ -164,6 +169,28 @@ export interface BalanceDTO {
   pendingBalance: number;
   totalEarned: number;
   totalSpent: number;
+}
+
+export type PaymentIntentStatus =
+  | 'AWAITING_TRANSFER'
+  | 'PENDING_REVIEW'
+  | 'CONFIRMED'
+  | 'REJECTED'
+  | 'EXPIRED';
+
+/** Karta-karta to'lov: foydalanuvchi AYNAN `expectedAmount` yuborishi kerak */
+export interface PaymentIntentDTO {
+  id: string;
+  amount: number;
+  expectedAmount: number;
+  status: PaymentIntentStatus;
+  cardNumber: string;
+  cardHolder: string;
+  orderId: string | null;
+  hasReceipt: boolean;
+  rejectReason: string | null;
+  expiresAt: string;
+  createdAt: string;
 }
 
 export interface WithdrawalDTO {

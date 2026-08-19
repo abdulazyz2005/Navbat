@@ -11,11 +11,13 @@
 export const DEFAULT_PLATFORM_FEE_PERCENT = 10;
 
 export interface PriceBreakdown {
-  /** Navbatchi qo'liga tegadigan summa */
+  /** Buyurtmachi e'lon qilgan (va to'laydigan) narx */
   offeredAmount: number;
-  /** Platforma komissiyasi */
+  /** Platforma xizmat haqi — navbatchining ulushidan ushlanadi */
   platformFee: number;
-  /** Buyurtmachi to'laydigan jami summa */
+  /** Navbatchi qo'liga tegadigan summa (offeredAmount - platformFee) */
+  workerAmount: number;
+  /** Buyurtmachi to'laydigan jami summa (== offeredAmount) */
   totalAmount: number;
   feePercent: number;
 }
@@ -30,9 +32,14 @@ export function assertPositiveInteger(value: number, field = 'amount'): void {
 }
 
 /**
- * platform_fee = offered_amount * fee_percent / 100  (pastga yaxlitlangan integer)
- * worker_amount = offered_amount
- * buyer_total   = offered_amount + platform_fee
+ * Komissiya NAVBATCHIDAN ushlanadi (buyurtmachi ustiga qo'shilmaydi):
+ *
+ *   platform_fee  = offered_amount * fee_percent / 100   (pastga yaxlitlangan integer)
+ *   worker_amount = offered_amount - platform_fee
+ *   buyer_total   = offered_amount
+ *
+ * Ya'ni buyurtmachi e'londa ko'rgan summani to'laydi, navbatchi esa
+ * xizmat haqi ushlangandan keyingi summani oladi.
  */
 export function calculatePrice(
   offeredAmount: number,
@@ -46,7 +53,8 @@ export function calculatePrice(
   return {
     offeredAmount,
     platformFee,
-    totalAmount: offeredAmount + platformFee,
+    workerAmount: offeredAmount - platformFee,
+    totalAmount: offeredAmount,
     feePercent,
   };
 }
