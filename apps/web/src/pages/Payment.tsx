@@ -83,6 +83,21 @@ export function Payment() {
       }
       setIntent(await api.createIntent(requestedAmount, orderId));
     } catch (err) {
+      /**
+       * Boshqa buyurtma uchun tugallanmagan to'lov bor bo'lsa — o'shani ochamiz,
+       * chunki bir vaqtda faqat bitta faol to'lov bo'lishi mumkin.
+       */
+      if (err instanceof ApiError && err.code === 'ACTIVE_INTENT_EXISTS') {
+        const details = err.details as { intentId?: string } | undefined;
+        if (details?.intentId) {
+          try {
+            setIntent(await api.intent(details.intentId));
+            return;
+          } catch {
+            /* pastdagi xabar ko'rsatiladi */
+          }
+        }
+      }
       setError(err instanceof ApiError ? err.message : 'To‘lovni boshlab bo‘lmadi');
     } finally {
       setLoading(false);
