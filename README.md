@@ -183,8 +183,16 @@ O‘z Telegram ID’ingizni [@userinfobot](https://t.me/userinfobot) dan oling:
 ADMIN_TELEGRAM_IDS="123456789,987654321"
 ```
 
-Admin Mini Appga kirganda Profil → **🛠 Admin panel** ochiladi (`/admin`).
-Oddiy foydalanuvchi u yerga kira olmaydi — API `403 ADMIN_ONLY` qaytaradi.
+**Admin panel Mini Appdan BUTUNLAY ajratilgan.** U alohida ilova:
+
+- manzil: `https://<domen>/admin` — oddiy brauzerda, kompyuter ekraniga moslangan
+- alohida bundle: Mini App kodida admin komponentlari umuman yo‘q
+- kirish: Telegramda botga `/admin` yuboriladi → bot bir martalik kod va havola beradi
+  (kod 10 daqiqa yashaydi va faqat bir marta ishlaydi)
+- token `scope='admin'` bilan beriladi va 12 soat amal qiladi
+
+Mini App tokeni admin endpointlariga **hech qachon** o‘tmaydi — foydalanuvchi admin
+bo‘lsa ham `403 ADMIN_SESSION_REQUIRED` qaytadi.
 
 ### Bot buyruqlari
 
@@ -195,6 +203,11 @@ Oddiy foydalanuvchi u yerga kira olmaydi — API `403 ADMIN_ONLY` qaytaradi.
 | `/topshiriqlar` | Faol topshiriqlar             |
 | `/lokatsiya`    | Joylashuv yuborish (check-in) |
 | `/yordam`       | Yordam                        |
+| `/admin`        | faqat admin — panelga kirish kodi |
+
+Bundan tashqari bot **chek rasmini** qabul qiladi: foydalanuvchi to‘lov chekini
+botga yuborsa, u faol to‘lovga avtomatik biriktiriladi va adminlarga tugmalar bilan
+yuboriladi (✅ Pul keldi / ❌ Kelmadi).
 
 ### Bot rejimlari
 
@@ -387,14 +400,18 @@ Prefikssiz ikkita yo'l bor:
 
 | Metod  | Endpoint                | Tavsif                                     |
 | ------ | ----------------------- | ------------------------------------------ |
-| `POST` | `/payments/create`      | `{ orderId }` → escrow to‘lov              |
+| `POST` | `/payments/create`      | `{ orderId }` → balansdan escrow to‘lov    |
+| `POST` | `/payments/intents`     | `{ amount, orderId? }` → karta + unikal summa |
+| `GET`  | `/payments/intents/active` | tugallanmagan to‘lov (bo‘lsa)           |
+| `POST` | `/payments/intents/:id/receipt` | chek rasmini yuklash               |
+| `GET`  | `/payments/intents/:id` | to‘lov holati (faqat egasi)                |
 | `GET`  | `/payments/:id`         | to‘lov (faqat egalari)                     |
 | `POST` | `/payments/:id/release` | to‘lovni chiqarish (faqat buyurtmachi)     |
 | `GET`  | `/disputes`             | mening nizolarim                           |
 | `GET`  | `/notifications`        | bildirishnomalar                           |
 | `POST` | `/notifications/read`   | hammasini o‘qilgan deb belgilash           |
 
-### Admin (faqat `ADMIN_TELEGRAM_IDS`)
+### Admin (faqat admin panel sessiyasi bilan)
 
 | Metod  | Endpoint                          | Tavsif                             |
 | ------ | --------------------------------- | ---------------------------------- |
@@ -407,7 +424,14 @@ Prefikssiz ikkita yo'l bor:
 | `POST` | `/admin/disputes/:id/resolve`     | `{ winner, resolution }`           |
 | `GET`  | `/admin/withdrawals?status=`      | pul yechish so‘rovlari             |
 | `POST` | `/admin/withdrawals/:id/decide`   | manual payout qarori               |
+| `GET`  | `/admin/intents?status=`          | karta to‘lovlari (chek bilan)      |
+| `GET`  | `/admin/intents/:id/receipt`      | chek rasmi                         |
+| `POST` | `/admin/intents/:id/confirm`      | pul keldi → balansga qo‘shiladi    |
+| `POST` | `/admin/intents/:id/reject`       | `{ reason }` — rad etish           |
+| `GET`  | `/admin/settings`                 | platforma kartasi                  |
+| `PUT`  | `/admin/settings/card`            | kartani o‘zgartirish               |
 | `POST` | `/admin/maintenance/expire-orders`| muddati o‘tganlarni tozalash       |
+| `POST` | `/admin/session`                  | kirish kodi → admin tokeni (ochiq) |
 
 ### Xatolar
 
@@ -555,11 +579,12 @@ createdb navbat_test
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/navbat_test" npm run prisma:deploy
 ```
 
-### Qamrov (100 test)
+### Qamrov (121 test)
 
-**Unit (29)** — `tests/unit.test.ts`
+**Unit (30)** — `tests/unit.test.ts`
 
-- komissiya hisobi (50 000 → 5 000 → 55 000), yaxlitlash, butun sonlik
+- komissiya hisobi (50 000 to‘lov → 5 000 xizmat haqi → navbatchiga 45 000),
+  yaxlitlash, butun sonlik, “komissiya + navbatchi ulushi = to‘langan summa”
 - reyting o‘rtachasi, muvaffaqiyat foizi, ishonchlilik ballari
 - matching engine: vaqt kesishuvi, Haversine masofa, radius, minimal to‘lov, ball 0..100
 - order va payment holat mashinalari (ruxsat etilgan / etilmagan o‘tishlar)
@@ -574,6 +599,18 @@ DATABASE_URL="postgresql://postgres:postgres@localhost:5432/navbat_test" npm run
 - nizo ochish va adminning ikki tomonlama qarori
 - matching feed: filtrlash, saralash, mos kelmaydiganlarni yashirish
 - pul yechish: blokirovka, yetarsiz mablag‘, minimal summa, bekor qilish
+
+**To‘lov va admin (18)** — `tests/payments.test.ts`
+
+- unikal summa: ikkita faol to‘lov hech qachon bir xil summaga ega bo‘lmaydi
+- bitta foydalanuvchida bir vaqtda faqat bitta faol to‘lov
+- chek yuklash → admin tasdig‘i → balans; ikki marta tasdiqlansa pul takrorlanmaydi
+- rad etish: pul qo‘shilmaydi, sabab foydalanuvchiga ko‘rinadi
+- begona odam boshqaning to‘loviga chek biriktira olmaydi / ko‘ra olmaydi
+- to‘lov tasdiqlangach buyurtma avtomatik PUBLISHED bo‘ladi
+- Mini App tokeni admin endpointga o‘tmaydi (`ADMIN_SESSION_REQUIRED`)
+- admin kirish kodi bir marta ishlaydi
+- payout: karta profilda saqlanadi, admin navbatida ko‘rinadi, “to‘landi” belgilanadi
 
 **Bot (13)** — `tests/bot.test.ts`
 
@@ -607,18 +644,53 @@ shu tufayli to‘liq zanjir tekshiriladi: `update → handler → DB → Telegra
 
 ```
 platform_fee  = offered_amount * PLATFORM_FEE_PERCENT / 100   (pastga yaxlitlanadi)
-worker_amount = offered_amount
-buyer_total   = offered_amount + platform_fee
+worker_amount = offered_amount - platform_fee
+buyer_total   = offered_amount
 ```
 
-Misol: `50 000` taklif → platforma `5 000` → buyurtmachi `55 000` to‘laydi,
-navbatchi `50 000` oladi.
+Misol: `50 000` taklif → buyurtmachi **aynan 50 000** to‘laydi, platforma `5 000`
+xizmat haqi ushlaydi, navbatchi **45 000** oladi.
+
+> Komissiya buyurtmachining ustiga qo‘shilmaydi — u e’londa ko‘rgan summani
+> to‘laydi. Xizmat haqi navbatchining ulushidan ushlanadi.
 
 **Floating point ishlatilmaydi.** Hamma summa `Int` (so‘m). `calculatePrice()` kasrli yoki
 manfiy summani rad etadi. Komissiya pastga yaxlitlanadi — foydalanuvchi hech qachon
 ortiqcha to‘lamaydi.
 
-### 9.2. Escrow oqimi
+### 9.2. Karta-karta to‘lov (yarim avtomatik escrow)
+
+Uzbekistonda merchant hisobisiz to‘lovni tekshirishning yagona ishonchli yo‘li —
+**unikal summa**. Har bir to‘lovga tizim boshqa hech kimda bo‘lmagan summa beradi:
+
+```
+Foydalanuvchi 50 000 to'lamoqchi
+      ↓
+Tizim beradi: karta 8600 **** **** 1234  +  AYNAN 50 137 so'm
+      ↓ foydalanuvchi pul o'tkazadi va chek rasmini yuklaydi
+payment_intent PENDING_REVIEW  → adminlarga chek + [✅ Pul keldi] [❌ Kelmadi]
+      ↓ admin tasdiqlaydi
++50 137 balansga  → buyurtma uchun bo'lsa, buyurtma AVTOMATIK e'lon qilinadi
+```
+
+Nima uchun unikal summa: karta-karta o‘tkazmada izoh maydoni yo‘q, shuning uchun
+pulni faqat summa orqali aniq ajratish mumkin. Bir vaqtning o‘zida ikkita faol
+to‘lov bir xil summaga ega bo‘lolmaydi — buni DB darajasidagi partial unique index
+kafolatlaydi (`payment_intents_active_amount_key`).
+
+Himoyalar:
+
+- admin ikki marta bossa ham pul **ikki marta qo‘shilmaydi** (holat atomar o‘zgaradi)
+- begona odam boshqaning to‘loviga chek biriktira olmaydi va uni ko‘rmaydi
+- chek rasmi 2 MB dan katta bo‘lsa rad etiladi, brauzerda oldindan siqiladi
+- to‘lov so‘rovi 60 daqiqadan keyin `EXPIRED` bo‘ladi
+- botdagi tugmalar bosilganda foydalanuvchi DB’da qayta `isAdmin` deb tekshiriladi
+
+Pul chiqarish (payout) ham shu tarzda: navbatchi kartasini profilda saqlaydi,
+so‘rov yuboradi (summa darhol bloklanadi), admin panelda karta va summa nusxalash
+tugmalari bilan ko‘rinadi; pul o‘tkazilgach “✅ To‘ladim” bosiladi.
+
+### 9.2.1. Escrow oqimi
 
 ```
 Buyurtma yaratildi        payment PENDING
