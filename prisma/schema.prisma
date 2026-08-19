@@ -161,6 +161,9 @@ model User {
   notifications     Notification[]
   transactions      Transaction[]
   checkIns          CheckIn[]
+  paymentIntents    PaymentIntent[] @relation("IntentUser")
+  intentsReviewed   PaymentIntent[] @relation("IntentReviewer")
+  adminLoginCodes   AdminLoginCode[] @relation("AdminCodes")
 
   @@index([telegramId])
   @@map("users")
@@ -182,6 +185,9 @@ model Profile {
   avgResponseSec  Int      @default(0)
   city            String?
   phone           String?
+  // Pul yechish uchun karta (payout). Faqat egasi va admin ko'radi.
+  cardNumber      String?
+  cardHolder      String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -204,9 +210,10 @@ model Order {
   date           DateTime      @db.Date
   startTime      String // "14:30"
   endTime        String // "16:00"
-  offeredAmount  Int // navbatchi oladigan summa (UZS)
-  platformFee    Int // platforma komissiyasi (UZS)
-  totalAmount    Int // buyurtmachi to'laydigan jami (UZS)
+  offeredAmount  Int // buyurtmachi to'laydigan e'lon narxi (UZS)
+  platformFee    Int // navbatchidan ushlanadigan xizmat haqi (UZS)
+  workerAmount   Int @default(0) // navbatchi qo'liga tegadigan (offeredAmount - platformFee)
+  totalAmount    Int // buyurtmachi to'laydigan jami (== offeredAmount)
   status         OrderStatus   @default(DRAFT)
   priceRaises    Int           @default(0)
   cancelReason   String?
@@ -410,4 +417,81 @@ model CheckIn {
 
   @@index([orderId])
   @@map("check_ins")
+}
+
+
+// ------------------------------------------------- karta-karta to'lov (escrow)
+
+enum PaymentIntentStatus {
+  AWAITING_TRANSFER // foydalanuvchiga karta va aniq summa ko'rsatildi
+  PENDING_REVIEW    // chek yuborildi, admin tasdiqlashini kutmoqda
+  CONFIRMED         // admin tasdiqladi, balansga o'tkazildi
+  REJECTED          // admin rad etdi
+  EXPIRED           // muddati o'tdi
+}
+
+/**
+ * Karta-karta to'lov niyati.
+ *
+ * Foydalanuvchi platforma kartasiga AYNAN `expectedAmount` yuboradi
+ * (asosiy summa + unikal qo'shimcha, masalan 50 000 + 37 = 50 037).
+ * Shu unikal summa tufayli qaysi to'lov kimdan kelgani aniq belgilanadi.
+ * Admin chekni ko'rib tasdiqlaydi — shundan keyingina pul balansga tushadi.
+ */
+model PaymentIntent {
+  id             String              @id @default(uuid())
+  userId         String
+  orderId        String? // to'lov aniq buyurtma uchun bo'lsa
+  amount         Int // asosiy summa (UZS)
+  expectedAmount Int // aynan shu summa o'tkazilishi kerak (unikal)
+  status         PaymentIntentStatus @default(AWAITING_TRANSFER)
+
+  // Platforma kartasi (o'zgarsa ham tarix saqlanadi)
+  cardNumber String
+  cardHolder String
+
+  // Chek: Telegram fayl yoki Mini App'dan yuklangan rasm
+  receiptFileId String?
+  receiptData   Bytes?
+  receiptMime   String?
+  receiptAt     DateTime?
+
+  reviewedById String?
+  reviewedAt   DateTime?
+  rejectReason String?
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User  @relation("IntentUser", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy User? @relation("IntentReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status, createdAt])
+  @@index([userId, status])
+  @@map("payment_intents")
+}
+
+/** Admin veb-paneliga kirish uchun bir martalik kod (bot yuboradi) */
+model AdminLoginCode {
+  id        String    @id @default(uuid())
+  userId    String
+  codeHash  String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation("AdminCodes", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("admin_login_codes")
+}
+
+/** Sozlamalar (platforma kartasi va h.k.) — admin panelidan o'zgartiriladi */
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
 }
