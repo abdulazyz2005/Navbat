@@ -1,5 +1,9 @@
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(({ command, mode }) => {
   // .env fayli monorepo ildizida turadi
@@ -45,6 +49,16 @@ export default defineConfig(({ command, mode }) => {
       sourcemap: false,
       target: 'es2020',
       rollupOptions: {
+        /**
+         * IKKI ALOHIDA ILOVA, ikki alohida bundle:
+         *   index.html -> Telegram Mini App (foydalanuvchi)
+         *   admin.html -> admin panel (brauzer)
+         * Mini App bundlida admin kodi umuman bo'lmaydi.
+         */
+        input: {
+          main: resolve(__dirname, 'index.html'),
+          admin: resolve(__dirname, 'admin.html'),
+        },
         output: {
           manualChunks: {
             react: ['react', 'react-dom', 'react-router-dom'],

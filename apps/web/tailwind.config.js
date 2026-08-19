@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  content: ['./index.html', './admin.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
@@ -23,6 +23,14 @@ export default {
         money: {
           500: '#12b76a',
           600: '#0e9455',
+        },
+        danger: {
+          500: '#f04438',
+          600: '#d92d20',
+        },
+        warn: {
+          500: '#f79009',
+          600: '#dc6803',
         },
       },
       borderRadius: {
