@@ -103,6 +103,7 @@ export function mapOrder(order: OrderWithRelations, extras: MapOrderExtras = {})
     endTime: order.endTime,
     offeredAmount: order.offeredAmount,
     platformFee: order.platformFee,
+    workerAmount: order.workerAmount,
     totalAmount: order.totalAmount,
     status: order.status,
     priceRaises: order.priceRaises,

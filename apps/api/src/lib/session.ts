@@ -6,11 +6,23 @@ import { env } from '../env.js';
  * Tashqi JWT kutubxonasiga ehtiyoj yo'q — payload kichik va faqat server imzolaydi.
  */
 
+/**
+ * Sessiya doirasi:
+ *   'app'   — Telegram Mini App (oddiy foydalanuvchi)
+ *   'admin' — brauzerdagi admin panel (bot bergan bir martalik kod orqali)
+ *
+ * Admin paneli tokeni Mini App API'siga ham yaraydi, lekin Mini App tokeni
+ * HECH QACHON admin endpointlarini ocholmaydi — bu ikki interfeysni to'liq ajratadi.
+ */
+export type SessionScope = 'app' | 'admin';
+
 interface SessionPayload {
   /** internal user id (uuid) */
   sub: string;
   /** telegram id — audit uchun */
   tg: string;
+  /** sessiya doirasi */
+  scp?: SessionScope;
   /** issued at (sec) */
   iat: number;
   /** expires at (sec) */
@@ -25,13 +37,18 @@ function sign(data: string): string {
   return crypto.createHmac('sha256', env.SESSION_SECRET).update(data).digest('base64url');
 }
 
-export function createSessionToken(userId: string, telegramId: string): string {
+export function createSessionToken(
+  userId: string,
+  telegramId: string,
+  options: { scope?: SessionScope; ttlSec?: number } = {},
+): string {
   const now = Math.floor(Date.now() / 1000);
   const payload: SessionPayload = {
     sub: userId,
     tg: telegramId,
+    scp: options.scope ?? 'app',
     iat: now,
-    exp: now + env.SESSION_TTL_SEC,
+    exp: now + (options.ttlSec ?? env.SESSION_TTL_SEC),
   };
   const body = b64url(JSON.stringify(payload));
   return `${body}.${sign(body)}`;
